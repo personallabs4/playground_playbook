@@ -4,6 +4,8 @@
   become: true
   roles:
     - name: "UBUNTU22-CIS"
+      src: https://github.com/ansible-lockdown/UBUNTU22-CIS.git
+      version: main
       vars:
         audit_only: true
         setup_audit: true

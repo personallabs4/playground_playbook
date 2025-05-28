@@ -2,13 +2,9 @@
 collections:
   - src: https://github.com/ansible-collections/community.general
     name: community.general
-    version: main
 
   - src: https://github.com/ansible-collections/community.crypto
     name: community.crypto
-    version: main
 
   - src: https://github.com/ansible-collections/ansible.posix
-    name: ansible.posix
-    version: main
-  
+    name: ansible.posix  

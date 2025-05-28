@@ -1,0 +1,3 @@
+- src: https://github.com/ansible-lockdown/UBUNTU22-CIS.git
+  name: UBUNTU22-CIS
+  version: main

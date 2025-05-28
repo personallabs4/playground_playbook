@@ -1,15 +1,15 @@
 ---
 collections:
-  - name: community.general
-    source: https://github.com/ansible-collections/community.general
+  - src: https://github.com/ansible-collections/community.general
+    name: community.general
     type: git
 
-  - name: community.crypto
-    source: https://github.com/ansible-collections/community.crypto
+  - src: https://github.com/ansible-collections/community.crypto
+    name: community.crypto
     type: git
 
-  - name: ansible.posix
-    source: https://github.com/ansible-collections/ansible.posix
+  - src: https://github.com/ansible-collections/ansible.posix
+    name: ansible.posix
     type: git
     
   - src: https://github.com/ansible-lockdown/UBUNTU22-CIS.git

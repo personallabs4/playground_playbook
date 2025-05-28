@@ -1,0 +1,14 @@
+---
+- name: UBUNTU22 CIS Audit
+  hosts: all
+  become: true
+  roles:
+    - name: "UBUNTU22-CIS"
+      vars:
+        audit_only: true
+        setup_audit: true
+        run_audit: true
+        grub_user_pass: "PASTE_YOUR_GRUB_PASSWORD"
+      when:
+        - ansible_os_family == 'Debian'
+        - ansible_distribution_major_version == '22'

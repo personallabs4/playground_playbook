@@ -11,6 +11,7 @@ collections:
   - name: ansible.posix
     source: https://github.com/ansible-collections/ansible.posix
     type: git
+    
   - src: https://github.com/ansible-lockdown/UBUNTU22-CIS.git
     name: UBUNTU22-CIS
     version: main

@@ -1,8 +1,4 @@
----
-- src: https://github.com/ansible-lockdown/UBUNTU22-CIS.git
-  name: UBUNTU22-CIS
-  version: main
-  
+--- 
 collections:
   - src: https://github.com/ansible-collections/community.general
     name: community.general
@@ -15,5 +11,8 @@ collections:
   - src: https://github.com/ansible-collections/ansible.posix
     name: ansible.posix
     version: main
-    
-
+  
+roles:
+  - src: https://github.com/ansible-lockdown/UBUNTU22-CIS.git
+    name: UBUNTU22-CIS
+    version: main

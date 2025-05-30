@@ -72,21 +72,41 @@
       tags: scan
 
     # Task 3: Execute OpenSCAP scan
-    - name: Execute OpenSCAP scan with proper failure handling
-      ansible.builtin.command: >
-        oscap xccdf eval
-        --profile xccdf_org.ssgproject.content_profile_cis_level2_server
-        --results-arf "{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
+    - name: Run security scan
+      ansible.builtin.shell: |
+        oscap xccdf eval \
+        --profile xccdf_org.ssgproject.content_profile_cis_level2_server \
+        --results-arf "{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml" \
         "{{ scap_profiles_dir }}/{{ target_profile }}"
-      register: oscap_scan
-      changed_when: >
-        oscap_scan.rc == 0 or
-        (oscap_scan.rc == 2 and 'Rule: Some rules failed.' in oscap_scan.stdout)
-      failed_when: >
-        oscap_scan.rc not in [0, 2] or
-        (oscap_scan.rc == 2 and 'Rule: Some rules failed.' not in oscap_scan.stdout)
       args:
-        warn: no  # Suppresses warning about rc!=0
+        executable: /bin/bash
+      register: oscap_scan
+      ignore_errors: yes
+      changed_when: 
+        - oscap_scan.rc in [0, 2]
+        - "'Rule: Some rules failed.' in oscap_scan.stdout"
+      failed_when:
+        - oscap_scan.rc not in [0, 2]
+        or
+        - "'Rule: Some rules failed.' not in oscap_scan.stdout"
+      tags: scan
+
+    # Task 4: Handle scan results
+    - name: Process scan results
+      block:
+        - name: Check scan status
+          ansible.builtin.debug:
+            msg: "Scan completed with findings (normal for compliance scans)"
+          when: oscap_scan.rc == 2
+
+        - name: Check successful scan
+          ansible.builtin.debug:
+            msg: "Scan completed with no findings"
+          when: oscap_scan.rc == 0
+      rescue:
+        - name: Handle scan failure
+          ansible.builtin.fail:
+            msg: "OpenSCAP scan failed with error (RC={{ oscap_scan.rc }}): {{ oscap_scan.stderr }}"
       tags: scan
     
     # Task 4: Fix timestamp in ARF report

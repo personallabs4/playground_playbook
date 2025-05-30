@@ -31,6 +31,7 @@
     - name: Install OpenSCAP packages for Ubuntu < 24.04
       ansible.builtin.package:
         name:
+          - openscap-utils
           - libopenscap8
         state: present
       when: 
@@ -303,39 +304,116 @@
 
     - name: Execute OpenSCAP scan
       ansible.builtin.shell: |
-        # Set error handling
-        set -e
-        
         echo "Starting scan with:"
         echo "- Profile: {{ profile_path }}"
         echo "- Timestamp: {{ scan_timestamp }}"
+        echo ""
+        
+        # Check if profile file exists and is readable
+        if [ ! -f "{{ profile_path }}" ]; then
+          echo "ERROR: Profile file does not exist: {{ profile_path }}"
+          exit 1
+        fi
+        
+        if [ ! -r "{{ profile_path }}" ]; then
+          echo "ERROR: Cannot read profile file: {{ profile_path }}"
+          exit 1
+        fi
+        
+        echo "Profile file check: OK"
+        
+        # Test oscap info command
+        echo "Testing oscap info command..."
+        if ! oscap info "{{ profile_path }}" >/dev/null 2>&1; then
+          echo "ERROR: oscap cannot read profile file"
+          echo "Testing with verbose error:"
+          oscap info "{{ profile_path }}" 2>&1 || true
+          exit 1
+        fi
         
         # Get available profiles
-        PROFILES=$(oscap info "{{ profile_path }}" | grep "Profile:" | head -3)
+        echo "Getting available profiles..."
+        PROFILES=$(oscap info "{{ profile_path }}" 2>/dev/null | grep "Profile:" | head -5)
+        
+        if [ -z "$PROFILES" ]; then
+          echo "ERROR: No profiles found in datastream"
+          echo "Datastream info:"
+          oscap info "{{ profile_path }}" 2>&1 | head -20 || true
+          exit 1
+        fi
+        
         echo "Available profiles:"
         echo "$PROFILES"
+        echo ""
         
         # Get first profile ID
         PROFILE_ID=$(echo "$PROFILES" | head -1 | awk '{print $2}')
         
         if [ -z "$PROFILE_ID" ]; then
-          echo "No profiles found"
+          echo "ERROR: Could not extract profile ID"
           exit 1
         fi
         
-        echo "Using: $PROFILE_ID"
+        echo "Selected profile ID: $PROFILE_ID"
+        echo ""
         
-        # Run scan
+        # Prepare output files
+        ARF_FILE="{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
+        HTML_FILE="{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html"
+        
+        echo "Output files:"
+        echo "- ARF: $ARF_FILE"
+        echo "- HTML: $HTML_FILE"
+        echo ""
+        
+        # Run scan (allow it to fail, capture return code)
+        echo "Starting OpenSCAP evaluation..."
+        set +e  # Allow commands to fail
+        
         oscap xccdf eval \
           --profile "$PROFILE_ID" \
-          --results-arf "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" \
-          --report "{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html" \
+          --results-arf "$ARF_FILE" \
+          --report "$HTML_FILE" \
           "{{ profile_path }}"
         
-        echo "Scan completed with RC: $?"
+        SCAN_RC=$?
+        echo ""
+        echo "OpenSCAP scan completed with return code: $SCAN_RC"
         
-        # Check files
-        ls -la "{{ scap_reports_dir }}/{{ scan_timestamp }}"*
+        # Check what files were created
+        echo ""
+        echo "Checking output files:"
+        if [ -f "$ARF_FILE" ]; then
+          ARF_SIZE=$(stat -c%s "$ARF_FILE" 2>/dev/null || echo "unknown")
+          echo "✓ ARF file created: $ARF_SIZE bytes"
+        else
+          echo "✗ ARF file not created"
+        fi
+        
+        if [ -f "$HTML_FILE" ]; then
+          HTML_SIZE=$(stat -c%s "$HTML_FILE" 2>/dev/null || echo "unknown")
+          echo "✓ HTML file created: $HTML_SIZE bytes"
+        else
+          echo "✗ HTML file not created"
+        fi
+        
+        # List all files in reports directory
+        echo ""
+        echo "Files in reports directory:"
+        ls -la "{{ scap_reports_dir }}/" 2>/dev/null || echo "Cannot list directory"
+        
+        # Return code explanation
+        echo ""
+        echo "Return code explanation:"
+        case $SCAN_RC in
+          0) echo "RC 0: All rules passed" ;;
+          1) echo "RC 1: Error occurred" ;;
+          2) echo "RC 2: Some rules failed (normal for compliance scans)" ;;
+          *) echo "RC $SCAN_RC: Unexpected return code" ;;
+        esac
+        
+        # Exit with original return code
+        exit $SCAN_RC
       register: oscap_result
       when: 
         - prereq_check is defined 

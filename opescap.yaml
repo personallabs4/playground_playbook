@@ -1,5 +1,5 @@
 ---
-- name: OpenSCAP Security Compliance Scan
+- name: OpenSCAP Security Compliance Scan (Simplified)
   hosts: all
   become: yes
   vars:
@@ -10,81 +10,36 @@
     report_server: "http://10.20.11.117:2112"
 
   tasks:
-    # Task 0: Update package cache before installing packages
-    - name: Update package cache (Debian/Ubuntu)
-      ansible.builtin.apt:
+    # Task 1: Update package cache and install basic tools
+    - name: Update package cache
+      ansible.builtin.package:
         update_cache: yes
-        cache_valid_time: 3600
-      when: ansible_os_family == "Debian"
       ignore_errors: yes
       tags: setup
 
-    - name: Update package cache (RHEL/CentOS/Rocky/Alma)
-      ansible.builtin.yum:
-        update_cache: yes
-      when: ansible_os_family == "RedHat" and ansible_distribution_major_version | int <= 7
-      ignore_errors: yes
-      tags: setup
-
-    - name: Update package cache (RHEL 8+/CentOS 8+/Rocky/Alma with dnf)
-      ansible.builtin.dnf:
-        update_cache: yes
-      when: ansible_os_family == "RedHat" and ansible_distribution_major_version | int >= 8
-      ignore_errors: yes
-      tags: setup
-
-    # Task 0b: Install essential tools first
-    - name: Install essential tools
+    - name: Install basic tools
       ansible.builtin.package:
         name:
-          - unzip
           - curl
           - wget
+          - unzip
         state: present
       ignore_errors: yes
       tags: setup
 
-    # Task 1: Install OpenSCAP packages based on OS family
-    - name: Install core OpenSCAP packages for Debian/Ubuntu systems
+    # Task 2: Install OpenSCAP packages
+    - name: Install OpenSCAP packages (Debian/Ubuntu)
       ansible.builtin.package:
         name:
-          - libopenscap8
-          - libopenscap25t64
           - openscap-utils
+          - libopenscap8
+          - openscap-scanner
         state: present
       when: ansible_os_family == "Debian"
       ignore_errors: yes
       tags: setup
 
-    # Task 1a: Alternative - Download SCAP Security Guide if packages not available
-    - name: Download SCAP Security Guide (fallback for all systems)
-      ansible.builtin.get_url:
-        url: "https://github.com/ComplianceAsCode/content/releases/download/v{{ scap_guide_version }}/scap-security-guide-{{ scap_guide_version }}.zip"
-        dest: "/tmp/scap-security-guide.zip"
-        mode: '0644'
-        timeout: 60
-      ignore_errors: yes
-      tags: setup
-
-    - name: Extract SCAP Security Guide (fallback)
-      ansible.builtin.unarchive:
-        src: "/tmp/scap-security-guide.zip"
-        dest: "/tmp/"
-        remote_src: yes
-        creates: "/tmp/scap-security-guide-{{ scap_guide_version }}"
-      ignore_errors: yes
-      tags: setup
-
-    - name: Copy SCAP profiles to target directory (fallback)
-      ansible.builtin.shell: |
-        find "/tmp/scap-security-guide-{{ scap_guide_version }}" -name "*.xml" -exec cp {} "{{ scap_profiles_dir }}/" \; 2>/dev/null || true
-        ls -la "{{ scap_profiles_dir }}/"
-      args:
-        executable: /bin/bash
-      ignore_errors: yes
-      tags: setup
-
-    - name: Install OpenSCAP packages for RHEL/CentOS/Rocky/Alma systems
+    - name: Install OpenSCAP packages (RHEL/CentOS/Rocky/Alma)
       ansible.builtin.package:
         name:
           - openscap-scanner
@@ -95,51 +50,15 @@
       ignore_errors: yes
       tags: setup
 
-    # Task 2: OS detection and profile selection
+    # Task 3: Gather OS information
     - name: Gather OS facts
       ansible.builtin.setup:
         gather_subset:
           - distribution
-          - os_family
-        filter: "ansible_distribution*"
-      register: os_facts
       tags: always
 
-    # Task 3: Set profile name based on OS with comprehensive RHEL-based support
-    - name: Set profile name based on OS
-      ansible.builtin.set_fact:
-        target_profile: >-
-          {%- if os_facts.ansible_facts.ansible_distribution | lower == 'ubuntu' -%}
-            {%- if os_facts.ansible_facts.ansible_distribution_major_version == '18' -%}
-              ssg-ubuntu1804-ds.xml
-            {%- elif os_facts.ansible_facts.ansible_distribution_major_version == '20' -%}
-              ssg-ubuntu2004-ds.xml
-            {%- elif os_facts.ansible_facts.ansible_distribution_major_version == '22' -%}
-              ssg-ubuntu2204-ds.xml
-            {%- elif os_facts.ansible_facts.ansible_distribution_major_version == '24' -%}
-              ssg-ubuntu2404-ds.xml
-            {%- else -%}
-              ssg-ubuntu2004-ds.xml
-            {%- endif -%}
-          {%- elif os_facts.ansible_facts.ansible_distribution | lower == 'debian' -%}
-            ssg-debian{{ os_facts.ansible_facts.ansible_distribution_major_version | default('11') }}-ds.xml
-          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['centos', 'rhel', 'redhat', 'red hat enterprise linux'] -%}
-            ssg-rhel{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
-          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['rocky', 'rockylinux', 'rocky linux'] -%}
-            ssg-rhel{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
-          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['almalinux', 'alma linux', 'alma'] -%}
-            ssg-almalinux{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
-          {%- elif os_facts.ansible_facts.ansible_distribution | lower == 'fedora' -%}
-            ssg-fedora-ds.xml
-          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['oracle', 'oracle linux'] -%}
-            ssg-ol{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
-          {%- else -%}
-            ssg-rhel{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
-          {%- endif -%}
-      tags: scan
-
-    # Task 4: Create directories
-    - name: Ensure required directories exist
+    # Task 4: Create required directories
+    - name: Create directories
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory
@@ -149,385 +68,227 @@
         - "{{ scap_profiles_dir }}"
       tags: setup
 
-    # Task 5: Copy profile to remote host (only if source exists locally)
-    - name: Check if profile exists locally
-      ansible.builtin.stat:
-        path: "{{ scap_profiles_dir }}/{{ target_profile }}"
-      delegate_to: localhost
-      register: local_profile_check
-      become: no
-      tags: setup
-
-    - name: Copy profile to remote host
-      ansible.builtin.copy:
-        src: "{{ scap_profiles_dir }}/{{ target_profile }}"
-        dest: "{{ scap_profiles_dir }}/{{ target_profile }}"
+    # Task 5: Download SCAP Security Guide (universal fallback)
+    - name: Download SCAP Security Guide
+      ansible.builtin.get_url:
+        url: "https://github.com/ComplianceAsCode/content/releases/download/v{{ scap_guide_version }}/scap-security-guide-{{ scap_guide_version }}.zip"
+        dest: "/tmp/scap-security-guide.zip"
         mode: '0644'
-      when: local_profile_check.stat.exists
+        timeout: 120
+      ignore_errors: yes
       tags: setup
 
-    # Task 6: Check for system-installed profiles with multiple fallback locations
-    - name: Check for system-installed SCAP profiles
-      ansible.builtin.find:
-        paths:
-          - "/usr/share/xml/scap/ssg/content"
-          - "/usr/share/scap-security-guide"
-          - "/usr/share/xml/scap"
-          - "/usr/share/openscap"
-          - "{{ scap_profiles_dir }}"
-        patterns: 
-          - "*{{ target_profile }}*"
-          - "*rhel*ds.xml"
-          - "*centos*ds.xml"
-          - "*ubuntu*ds.xml"
-          - "*almalinux*ds.xml"
-          - "*alma*ds.xml"
-        recurse: yes
-      register: system_profiles
-      when: not (local_profile_check.stat.exists | default(false))
+    - name: Extract SCAP Security Guide
+      ansible.builtin.unarchive:
+        src: "/tmp/scap-security-guide.zip"
+        dest: "/tmp/"
+        remote_src: yes
+      ignore_errors: yes
       tags: setup
 
-    # Task 7: Set final profile path
-    - name: Set profile path
+    - name: Copy all SCAP profiles
+      ansible.builtin.shell: |
+        if [ -d "/tmp/scap-security-guide-{{ scap_guide_version }}" ]; then
+          find "/tmp/scap-security-guide-{{ scap_guide_version }}" -name "*ds.xml" -exec cp {} "{{ scap_profiles_dir }}/" \;
+        fi
+        ls -la "{{ scap_profiles_dir }}/"
+      ignore_errors: yes
+      tags: setup
+
+    # Task 6: Determine profile to use
+    - name: Set profile name
       ansible.builtin.set_fact:
-        profile_path: >-
-          {%- if local_profile_check.stat.exists -%}
-            {{ scap_profiles_dir }}/{{ target_profile }}
-          {%- elif system_profiles.files | length > 0 -%}
-            {{ system_profiles.files[0].path }}
+        profile_name: >-
+          {%- if ansible_distribution | lower == 'ubuntu' -%}
+            {%- if ansible_distribution_major_version == '18' -%}
+              ssg-ubuntu1804-ds.xml
+            {%- elif ansible_distribution_major_version == '20' -%}
+              ssg-ubuntu2004-ds.xml
+            {%- elif ansible_distribution_major_version == '22' -%}
+              ssg-ubuntu2204-ds.xml
+            {%- elif ansible_distribution_major_version == '24' -%}
+              ssg-ubuntu2404-ds.xml
+            {%- else -%}
+              ssg-ubuntu2004-ds.xml
+            {%- endif -%}
+          {%- elif ansible_distribution | lower == 'almalinux' -%}
+            ssg-almalinux{{ ansible_distribution_major_version | default('8') }}-ds.xml
+          {%- elif ansible_distribution | lower in ['rocky', 'rockylinux'] -%}
+            ssg-rhel{{ ansible_distribution_major_version | default('8') }}-ds.xml
+          {%- elif ansible_distribution | lower in ['centos', 'rhel', 'redhat'] -%}
+            ssg-rhel{{ ansible_distribution_major_version | default('8') }}-ds.xml
           {%- else -%}
-            /usr/share/xml/scap/ssg/content/{{ target_profile }}
+            ssg-rhel8-ds.xml
           {%- endif -%}
       tags: scan
 
-    # Task 8: Verify profile exists
-    - name: Check if profile exists on target
-      ansible.builtin.stat:
-        path: "{{ profile_path }}"
-      register: profile_check
+    # Task 7: Find the profile file
+    - name: Find SCAP profile file
+      ansible.builtin.shell: |
+        # Look in common locations
+        for dir in "{{ scap_profiles_dir }}" "/usr/share/xml/scap/ssg/content" "/usr/share/scap-security-guide"; do
+          if [ -f "$dir/{{ profile_name }}" ]; then
+            echo "$dir/{{ profile_name }}"
+            exit 0
+          fi
+        done
+        
+        # Find any similar file
+        find {{ scap_profiles_dir }} /usr/share -name "*{{ ansible_distribution | lower }}*ds.xml" -o -name "*rhel*ds.xml" 2>/dev/null | head -1
+      register: profile_search
+      ignore_errors: yes
       tags: scan
 
-    - name: Fail if profile not found
-      ansible.builtin.fail:
-        msg: "SCAP profile not found at {{ profile_path }}. Please install security guide packages or provide the profile file."
-      when: not profile_check.stat.exists
+    - name: Set profile path
+      ansible.builtin.set_fact:
+        profile_path: "{{ profile_search.stdout.strip() if profile_search.stdout else '/usr/share/xml/scap/ssg/content/ssg-rhel8-ds.xml' }}"
       tags: scan
 
-    # Task 9: Generate timestamp for report naming
-    - name: Generate timestamp
+    # Task 8: Generate timestamp
+    - name: Generate scan timestamp
       ansible.builtin.set_fact:
         scan_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
       tags: scan
 
-    # Task 10: Execute OpenSCAP scan with enhanced error handling and profile detection
-    - name: List available profiles for debugging
+    # Task 9: Execute OpenSCAP scan (simple version)
+    - name: Execute OpenSCAP scan
       ansible.builtin.shell: |
-        echo "=== Checking datastream file: {{ profile_path }} ==="
-        if [ -f "{{ profile_path }}" ]; then
-          echo "File exists and is readable"
-          echo "File size: $(stat -c%s "{{ profile_path }}" 2>/dev/null || echo "unknown")"
-          echo "=== Available profiles ==="
-          oscap info "{{ profile_path }}" 2>/dev/null | grep -E "(Profile|Title):" | head -20 || echo "Could not list profiles"
-        else
-          echo "ERROR: Datastream file does not exist or is not readable"
-          echo "Searching for alternative datastream files..."
-          find /usr/share -name "*ds.xml" -type f 2>/dev/null | head -10 || echo "No alternative files found"
-        fi
-        echo "=== End of profile check ==="
-      register: profile_list
-      ignore_errors: yes
-      tags: scan
-
-    - name: Display profile check results
-      ansible.builtin.debug:
-        msg: "{{ profile_list.stdout_lines | default(['No profile information available']) }}"
-      tags: scan
-
-    - name: Execute OpenSCAP scan with comprehensive error handling
-      ansible.builtin.shell: |
-        set -x  # Enable verbose output for debugging
-        
-        echo "=== Starting OpenSCAP scan ==="
-        echo "Timestamp: {{ scan_timestamp }}"
-        echo "Profile path: {{ profile_path }}"
-        echo "Reports directory: {{ scap_reports_dir }}"
-        
-        # Verify prerequisites
+        # Check if oscap is available
         if ! command -v oscap >/dev/null 2>&1; then
           echo "ERROR: oscap command not found"
           exit 1
         fi
         
+        # Check if profile file exists
         if [ ! -f "{{ profile_path }}" ]; then
-          echo "ERROR: Datastream file not found: {{ profile_path }}"
+          echo "ERROR: Profile file not found: {{ profile_path }}"
           exit 1
         fi
         
-        if [ ! -d "{{ scap_reports_dir }}" ]; then
-          echo "ERROR: Reports directory not found: {{ scap_reports_dir }}"
-          exit 1
-        fi
+        echo "Using profile: {{ profile_path }}"
         
-        # Test oscap with the datastream file
-        echo "=== Testing datastream file access ==="
-        if ! oscap info "{{ profile_path }}" >/dev/null 2>&1; then
-          echo "ERROR: Cannot read datastream file with oscap"
-          exit 1
-        fi
+        # Get first available profile
+        PROFILE=$(oscap info "{{ profile_path }}" 2>/dev/null | grep "Profile:" | head -1 | awk '{print $2}' || echo "")
         
-        # Get available profiles
-        echo "=== Getting available profiles ==="
-        AVAILABLE_PROFILES=$(oscap info "{{ profile_path }}" 2>/dev/null | grep "^[[:space:]]*Profile:" | awk '{print $2}' | tr '\n' ' ')
-        
-        if [ -z "$AVAILABLE_PROFILES" ]; then
+        if [ -z "$PROFILE" ]; then
           echo "ERROR: No profiles found in datastream"
           exit 1
         fi
         
-        echo "Available profiles: $AVAILABLE_PROFILES"
+        echo "Using profile ID: $PROFILE"
         
-        # Profile selection logic
-        DEFAULT_PROFILE="xccdf_org.ssgproject.content_profile_cis_level2_server"
-        {% if os_facts.ansible_facts.ansible_distribution | lower in ['rocky', 'rockylinux', 'almalinux', 'alma', 'centos', 'rhel', 'redhat'] and os_facts.ansible_facts.ansible_distribution_major_version | int >= 9 %}
-        DEFAULT_PROFILE="xccdf_org.ssgproject.content_profile_cis_server_l2"
-        {% endif %}
-        
-        PROFILE_TO_USE=""
-        
-        # Try different profile patterns in order of preference
-        for PATTERN in "$DEFAULT_PROFILE" "cis.*level.*2" "cis.*server.*l2" "cis.*l2" "cis" ".*"; do
-          echo "Trying pattern: $PATTERN"
-          FOUND_PROFILE=$(echo "$AVAILABLE_PROFILES" | tr ' ' '\n' | grep -i "$PATTERN" | head -1)
-          if [ -n "$FOUND_PROFILE" ]; then
-            PROFILE_TO_USE="$FOUND_PROFILE"
-            echo "Selected profile: $PROFILE_TO_USE"
-            break
-          fi
-        done
-        
-        if [ -z "$PROFILE_TO_USE" ]; then
-          # Use first available profile as absolute fallback
-          PROFILE_TO_USE=$(echo "$AVAILABLE_PROFILES" | awk '{print $1}')
-          echo "Using first available profile as fallback: $PROFILE_TO_USE"
-        fi
-        
-        if [ -z "$PROFILE_TO_USE" ]; then
-          echo "ERROR: No suitable profile found"
-          exit 1
-        fi
-        
-        echo "=== Final profile selection: $PROFILE_TO_USE ==="
-        
-        # Prepare output file paths
-        ARF_FILE="{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
-        HTML_FILE="{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html"
-        
-        echo "ARF output: $ARF_FILE"
-        echo "HTML output: $HTML_FILE"
-        
-        # Execute the scan
-        echo "=== Executing OpenSCAP scan ==="
-        START_TIME=$(date)
-        
+        # Run the scan
         oscap xccdf eval \
-          --profile "$PROFILE_TO_USE" \
-          --results-arf "$ARF_FILE" \
-          --report "$HTML_FILE" \
+          --profile "$PROFILE" \
+          --results-arf "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" \
+          --report "{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html" \
           "{{ profile_path }}"
         
-        SCAN_RC=$?
-        END_TIME=$(date)
-        
-        echo "=== Scan completed ==="
-        echo "Start time: $START_TIME"
-        echo "End time: $END_TIME"
-        echo "Return code: $SCAN_RC"
+        RC=$?
+        echo "Scan completed with return code: $RC"
         
         # Check if files were created
-        if [ -f "$ARF_FILE" ]; then
-          echo "ARF file created successfully: $(stat -c%s "$ARF_FILE" 2>/dev/null || echo "unknown size")"
-        else
-          echo "WARNING: ARF file was not created"
+        if [ -f "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" ]; then
+          echo "ARF file created: $(ls -lh {{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml)"
         fi
         
-        if [ -f "$HTML_FILE" ]; then
-          echo "HTML report created successfully: $(stat -c%s "$HTML_FILE" 2>/dev/null || echo "unknown size")"
-        else
-          echo "WARNING: HTML report was not created"
+        if [ -f "{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html" ]; then
+          echo "HTML report created: $(ls -lh {{ scap_reports_dir }}/{{ scan_timestamp }}-report.html)"
         fi
         
-        exit $SCAN_RC
-      args:
-        executable: /bin/bash
-      register: oscap_scan
+        exit $RC
+      register: oscap_result
       ignore_errors: yes
-      changed_when: oscap_scan.rc in [0, 2]
-      failed_when: false  # Don't fail the task, let us handle it
       tags: scan
 
-    # Task 11: Handle scan results with detailed analysis
-    - name: Analyze scan results
-      ansible.builtin.set_fact:
-        scan_successful: >-
-          {{
-            oscap_scan.rc is defined and 
-            oscap_scan.rc in [0, 2] and
-            "ARF file created successfully" in oscap_scan.stdout
-          }}
-        scan_return_code: "{{ oscap_scan.rc | default(-1) }}"
-      tags: scan
-
-    - name: Display detailed scan results
+    # Task 10: Check scan results
+    - name: Display scan results
       ansible.builtin.debug:
         msg: |
-          OpenSCAP Scan Analysis:
-          - Return Code: {{ scan_return_code }}
-          - Scan Successful: {{ scan_successful }}
-          - Status: {% if scan_return_code == 0 %}All checks passed{% elif scan_return_code == 2 %}Some checks failed (normal for compliance scans){% elif scan_return_code == 1 %}Scan completed with errors{% else %}Scan failed{% endif %}
+          OpenSCAP Scan Results:
+          - Host: {{ inventory_hostname }}
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - Profile: {{ profile_name }}
+          - Profile Path: {{ profile_path }}
+          - Return Code: {{ oscap_result.rc | default('Unknown') }}
+          - Status: {{ 'Success' if (oscap_result.rc | default(99)) in [0, 2] else 'Failed' }}
           
-          Scan Output Summary:
-          {{ oscap_scan.stdout | default('No output captured') | regex_replace('\n', '\n          ') }}
+          Output:
+          {{ oscap_result.stdout | default('No output') }}
           
-          {% if oscap_scan.stderr is defined and oscap_scan.stderr != '' %}
-          Error Output:
-          {{ oscap_scan.stderr | regex_replace('\n', '\n          ') }}
+          {% if oscap_result.stderr is defined and oscap_result.stderr != '' %}
+          Errors:
+          {{ oscap_result.stderr }}
           {% endif %}
       tags: scan
 
-    # Task 12: Fix timezone in ARF report (only if file exists)
-    - name: Check if ARF report was created
+    # Task 11: Fix timezone (only if ARF file exists)
+    - name: Check if ARF file exists
       ansible.builtin.stat:
         path: "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
-      register: arf_file_stat
+      register: arf_check
       tags: post_scan
 
-    - name: Adjust timezone in ARF report
+    - name: Fix timezone in ARF file
       ansible.builtin.replace:
         path: "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
         regexp: '([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?![+\-Z0-9:])'
         replace: '\1{{ timezone_offset }}'
-        backup: yes
       when: 
-        - scan_successful | default(false)
-        - arf_file_stat.stat.exists | default(false)
-        - arf_file_stat.stat.size | default(0) > 0
-      register: timezone_fix_result
+        - arf_check.stat.exists | default(false)
+        - arf_check.stat.size | default(0) > 0
       ignore_errors: yes
       tags: post_scan
 
-    - name: Display timezone adjustment result
-      ansible.builtin.debug:
-        msg: |
-          Timezone Adjustment:
-          - ARF file exists: {{ arf_file_stat.stat.exists | default(false) }}
-          - ARF file size: {{ arf_file_stat.stat.size | default(0) }} bytes
-          - Timezone fix applied: {{ timezone_fix_result is defined and timezone_fix_result is succeeded }}
-          - Backup created: {{ timezone_fix_result.backup_file | default('No backup') }}
-      when: arf_file_stat is defined
-      tags: post_scan
-
-    # Task 13: Upload report to server using curl from target host
-    - name: Upload compliance report using curl
+    # Task 12: Upload report (only if file exists)
+    - name: Upload ARF report
       ansible.builtin.shell: |
-        if [ ! -f "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" ]; then
-          echo "ERROR: ARF file does not exist"
+        ARF_FILE="{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
+        
+        if [ ! -f "$ARF_FILE" ]; then
+          echo "No ARF file to upload"
           exit 1
         fi
         
-        FILE_SIZE=$(stat -c%s "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" 2>/dev/null || echo "0")
-        if [ "$FILE_SIZE" -eq 0 ]; then
-          echo "ERROR: ARF file is empty"
+        SIZE=$(stat -c%s "$ARF_FILE" 2>/dev/null || echo "0")
+        if [ "$SIZE" -eq 0 ]; then
+          echo "ARF file is empty"
           exit 1
         fi
         
-        echo "Uploading ARF file (size: $FILE_SIZE bytes)"
+        echo "Uploading $ARF_FILE (size: $SIZE bytes)"
         
-        curl -X POST \
+        curl -f -X POST \
           -F "target={{ inventory_hostname }}" \
-          -F "report=@{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" \
-          -w "%{http_code}" \
-          -s \
+          -F "report=@$ARF_FILE" \
           "{{ report_server }}/upload"
       register: upload_result
       when: 
-        - scan_successful | default(false)
-        - arf_file_stat.stat.exists | default(false)
-        - arf_file_stat.stat.size | default(0) > 0
+        - arf_check.stat.exists | default(false)
+        - arf_check.stat.size | default(0) > 0
       ignore_errors: yes
       tags: post_scan
 
-    - name: Parse upload response and set status
-      ansible.builtin.set_fact:
-        upload_status_code: "{{ upload_result.stdout | default('0') | regex_replace('[^0-9]', '') | int }}"
-        upload_successful: "{{ (upload_result.stdout | default('0') | regex_replace('[^0-9]', '') | int) == 200 }}"
-      when: upload_result is defined and upload_result.stdout is defined
-      tags: post_scan
-
-    - name: Debug upload status
-      ansible.builtin.debug:
-        msg: |
-          Upload Debug Info:
-          - upload_result defined: {{ upload_result is defined }}
-          - upload_result.stdout: {{ upload_result.stdout | default('N/A') }}
-          - upload_status_code: {{ upload_status_code | default('N/A') }}
-          - upload_successful: {{ upload_successful | default('N/A') }}
-      when: upload_result is defined
-      tags: post_scan
-
-    # Task 14: Handle upload results
-    - name: Check upload status
-      ansible.builtin.debug:
-        msg: |
-          Upload result: 
-          - Status Code: {{ upload_status_code | default('Unknown') }}
-          - Upload Successful: {{ upload_successful | default(false) }}
-          - Message: {{ 'Success' if (upload_successful | default(false)) else 'Failed or skipped' }}
-      when: upload_result is defined
-      tags: post_scan
-
-    # Task 15: Trigger report rendering only if upload succeeded
-    - name: Trigger report generation
+    # Task 13: Trigger report rendering
+    - name: Trigger report rendering
       ansible.builtin.uri:
         url: "{{ report_server }}/render"
         method: GET
         timeout: 30
-        validate_certs: no
-      register: render_result
-      when: 
-        - upload_result is defined 
-        - upload_successful | default(false)
+      when: upload_result is defined and upload_result.rc == 0
       ignore_errors: yes
       tags: post_scan
 
-    - name: Debug render trigger conditions
+    # Task 14: Final summary
+    - name: Display final summary
       ansible.builtin.debug:
         msg: |
-          Render Trigger Debug:
-          - upload_result defined: {{ upload_result is defined }}
-          - upload_successful: {{ upload_successful | default('N/A') }}
-          - Will trigger render: {{ (upload_result is defined) and (upload_successful | default(false)) }}
-      tags: post_scan
-
-    # Task 16: Final status report with OS information
-    - name: Display final status
-      ansible.builtin.debug:
-        msg: |
-          OpenSCAP Compliance Scan Summary for {{ inventory_hostname }}:
-          - OS: {{ os_facts.ansible_facts.ansible_distribution }} {{ os_facts.ansible_facts.ansible_distribution_version }}
-          - OS Family: {{ ansible_os_family }}
-          - Profile: {{ target_profile }}
-          - Profile Path: {{ profile_path }}
-          - Scan Status: {{ 'Success' if scan_successful | default(false) else 'Failed' }}
-          - Reports Location: {{ scap_reports_dir }}/{{ scan_timestamp }}-*
-          - Upload Status: {{ 'Success' if (upload_successful | default(false)) else 'Failed/Skipped' }}
-          - Render Status: {{ 'Success' if (render_result.status | default(0)) == 200 else 'Failed/Skipped' }}
+          === OpenSCAP Compliance Scan Summary ===
+          Host: {{ inventory_hostname }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Profile Used: {{ profile_path }}
+          Scan Status: {{ 'Success' if (oscap_result.rc | default(99)) in [0, 2] else 'Failed' }}
+          ARF File: {{ 'Created' if (arf_check.stat.exists | default(false)) else 'Not Created' }}
+          Upload Status: {{ 'Success' if (upload_result is defined and upload_result.rc == 0) else 'Failed/Skipped' }}
+          Reports Location: {{ scap_reports_dir }}/{{ scan_timestamp }}-*
       tags: always
-
-  handlers:
-    # Handler: Clean up temporary files on failure
-    - name: Clean up on failure
-      ansible.builtin.file:
-        path: "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
-        state: absent
-      when: not (scan_successful | default(false))
-      listen: "cleanup temp files"

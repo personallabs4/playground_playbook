@@ -507,21 +507,29 @@
       ignore_errors: yes
       tags: post_scan
 
-    - name: Upload ARF report if found
+    - name: Adjust timezone in ARF report
+      ansible.builtin.shell: >
+        sed -i -E 's/([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})([^:+Z0-9]|")/\1{{ timezone_offset }}\2/g'
+        "{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
+      args:
+        executable: /bin/bash
+      register: adjust_report
+      when: find_arf_files is defined
+      ignore_errors: yes
+      tags: post_scan
+
+    - name: Upload compliance report
       ansible.builtin.uri:
         url: "{{ report_server }}/upload"
         method: POST
         body_format: form-multipart
+        headers:
+          Content-Type: "multipart/form-data"
         body:
           target: "{{ inventory_hostname }}"
-          report: "{{ lookup('file', item.path) }}"
-        timeout: 60
-      loop: "{{ find_arf_files.files }}"
-      when: 
-        - find_arf_files is defined
-        - find_arf_files.files is defined
-        - find_arf_files.files | length > 0
-      register: upload_results
+          report: "@{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
+      register: upload_result
+      when: adjust_report is defined
       ignore_errors: yes
       tags: post_scan
 

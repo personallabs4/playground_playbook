@@ -62,10 +62,19 @@
       register: profile_check
       tags: scan
 
-    - name: Validate profile exists
+    - name: Find matching profiles on target
+      ansible.builtin.find:
+        paths: "/opt/scap_profiles"
+        patterns: "{{ clean_profile_path }}"  # Explicitly specify the expected filename
+        use_regex: no
+      register: target_profiles
+      tags: scan
+
+    - name: Validate exactly one profile found
       ansible.builtin.assert:
-        that: profile_check.stat.exists
-        fail_msg: "SCAP profile {{ clean_profile_path }} not found in /opt/scap_profiles"
+        that:
+          - target_profiles.matched == 1
+        fail_msg: "Found {{ target_profiles.matched }} profiles. Expected exactly 1."
       tags: scan
 
     - name: Ensure reports directory exists
@@ -73,6 +82,12 @@
         path: "{{ scap_reports_dir }}"
         state: directory
         mode: '0755'
+      tags: scan
+
+    - name: Set cleaned profile path
+      ansible.builtin.set_fact:
+        scap_profile_path: "{{ target_profiles.files[0].path | trim }}"
+      when: target_profiles.matched == 1
       tags: scan
 
     # Task 3: Execute OpenSCAP scan

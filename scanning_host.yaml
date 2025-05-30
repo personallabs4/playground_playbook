@@ -62,11 +62,6 @@
         mode: '0755'
       tags: scan
 
-    - name: Generate target profile pattern
-      ansible.builtin.set_fact:
-        target_profile_pattern: "ssg-{{ distro_name }}{{ distro_version }}-ds.xml"
-      tags: scan
-
     - name: Find matching profiles on target
       ansible.builtin.find:
         paths: "/opt/scap_profiles"

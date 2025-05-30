@@ -45,6 +45,12 @@
       when: false  # Set to true for debugging
       tags: scan
 
+    - name: Copy the profile to the remote host
+      copy:
+        src: "/opt/scap_profiles/{{ target_profile }}"
+        dest: "/opt/scap_profiles/{{ target_profile }}"
+        mode: '0755'
+
     # Task 2: Profile validation and scanning
     - name: Check if profile exists
       ansible.builtin.stat:

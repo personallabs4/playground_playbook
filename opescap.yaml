@@ -53,8 +53,10 @@
         remote_src: yes
         mode: '0644'
       loop:
+        - "ssg-ubuntu1804-ds.xml"
         - "ssg-ubuntu2004-ds.xml"
         - "ssg-ubuntu2204-ds.xml"
+        - "ssg-ubuntu2404-ds.xml"
       when: 
         - ansible_os_family == "Debian"
         - ansible_distribution | lower == "ubuntu"
@@ -87,7 +89,9 @@
       ansible.builtin.set_fact:
         target_profile: >-
           {%- if os_facts.ansible_facts.ansible_distribution | lower == 'ubuntu' -%}
-            {%- if os_facts.ansible_facts.ansible_distribution_major_version == '20' -%}
+            {%- if os_facts.ansible_facts.ansible_distribution_major_version == '18' -%}
+              ssg-ubuntu1804-ds.xml
+            {%- elif os_facts.ansible_facts.ansible_distribution_major_version == '20' -%}
               ssg-ubuntu2004-ds.xml
             {%- elif os_facts.ansible_facts.ansible_distribution_major_version == '22' -%}
               ssg-ubuntu2204-ds.xml
@@ -271,10 +275,22 @@
       ignore_errors: yes
       tags: post_scan
 
-    - name: Parse upload response
+    - name: Parse upload response and set status
       ansible.builtin.set_fact:
-        upload_status_code: "{{ upload_result.stdout | default('0') | int }}"
+        upload_status_code: "{{ upload_result.stdout | default('0') | regex_replace('[^0-9]', '') | int }}"
+        upload_successful: "{{ (upload_result.stdout | default('0') | regex_replace('[^0-9]', '') | int) == 200 }}"
       when: upload_result is defined and upload_result.stdout is defined
+      tags: post_scan
+
+    - name: Debug upload status
+      ansible.builtin.debug:
+        msg: |
+          Upload Debug Info:
+          - upload_result defined: {{ upload_result is defined }}
+          - upload_result.stdout: {{ upload_result.stdout | default('N/A') }}
+          - upload_status_code: {{ upload_status_code | default('N/A') }}
+          - upload_successful: {{ upload_successful | default('N/A') }}
+      when: upload_result is defined
       tags: post_scan
 
     # Task 14: Handle upload results
@@ -283,7 +299,8 @@
         msg: |
           Upload result: 
           - Status Code: {{ upload_status_code | default('Unknown') }}
-          - Message: {{ 'Success' if (upload_status_code | default(0) | int) == 200 else 'Failed or skipped' }}
+          - Upload Successful: {{ upload_successful | default(false) }}
+          - Message: {{ 'Success' if (upload_successful | default(false)) else 'Failed or skipped' }}
       when: upload_result is defined
       tags: post_scan
 
@@ -297,9 +314,17 @@
       register: render_result
       when: 
         - upload_result is defined 
-        - upload_status_code is defined
-        - upload_status_code | int == 200
+        - upload_successful | default(false)
       ignore_errors: yes
+      tags: post_scan
+
+    - name: Debug render trigger conditions
+      ansible.builtin.debug:
+        msg: |
+          Render Trigger Debug:
+          - upload_result defined: {{ upload_result is defined }}
+          - upload_successful: {{ upload_successful | default('N/A') }}
+          - Will trigger render: {{ (upload_result is defined) and (upload_successful | default(false)) }}
       tags: post_scan
 
     # Task 16: Final status report with OS information
@@ -313,7 +338,7 @@
           - Profile Path: {{ profile_path }}
           - Scan Status: {{ 'Success' if scan_successful | default(false) else 'Failed' }}
           - Reports Location: {{ scap_reports_dir }}/{{ scan_timestamp }}-*
-          - Upload Status: {{ 'Success' if (upload_status_code | default(0) | int) == 200 else 'Failed/Skipped' }}
+          - Upload Status: {{ 'Success' if (upload_successful | default(false)) else 'Failed/Skipped' }}
           - Render Status: {{ 'Success' if (render_result.status | default(0)) == 200 else 'Failed/Skipped' }}
       tags: always
 

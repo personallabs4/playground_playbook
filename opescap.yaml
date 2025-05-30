@@ -293,6 +293,12 @@
           - Search was successful: {{ profile_search_detailed.rc == 0 if profile_search_detailed is defined else 'No search performed' }}
       tags: scan
 
+    # Task 9: Generate timestamp (moved here before scan)
+    - name: Generate scan timestamp
+      ansible.builtin.set_fact:
+        scan_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+      tags: scan
+
     # Task 8b: Debug profile file status
     - name: Debug profile file status
       ansible.builtin.shell: |

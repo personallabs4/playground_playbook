@@ -11,57 +11,49 @@
     
   tasks:
     # Task 1: Check OS and mark host
-    - name: Gather mandatory OS facts
+    - name: Gather OS facts with full distribution info
       ansible.builtin.setup:
-        gather_subset: min
+        gather_subset:
+          - distribution
+          - os_family
         filter: "ansible_distribution*"
       register: os_facts
       ignore_errors: yes
       tags: always
 
-    # Task 2: Safe variable definition with defaults
-    - name: Set base distribution name
+    - name: Set distribution base name
       ansible.builtin.set_fact:
-        distro_name: >-
-          {% if os_facts.ansible_facts is defined and os_facts.ansible_facts.ansible_distribution is defined %}
-            {{ os_facts.ansible_facts.ansible_distribution | lower }}
+        safe_distro_name: >-
+          {{ 
+            (os_facts.ansible_facts.ansible_distribution | default('unknown')) | lower 
+          }}
+      tags: always
+
+    - name: Extract and format version numbers
+      ansible.builtin.set_fact:
+        distro_version: >-
+          {% if os_facts.ansible_facts.ansible_distribution_release is defined %}
+            {{ os_facts.ansible_facts.ansible_distribution_release | regex_replace('[^0-9]', '') }}
+          {% elif os_facts.ansible_facts.ansible_distribution_version is defined %}
+            {{ os_facts.ansible_facts.ansible_distribution_version | regex_replace('(\\d+)\\.?(\\d+).*', '\\1\\2') }}
           {% else %}
-            unknown
+            {{ os_facts.ansible_facts.ansible_distribution_major_version | default('0') ~ '00' }}
           {% endif %}
       tags: always
 
-    - name: Set distribution version components
+    - name: Create target profile pattern
       ansible.builtin.set_fact:
-        distro_major: >-
-          {% if os_facts.ansible_facts is defined and os_facts.ansible_facts.ansible_distribution_major_version is defined %}
-            {{ os_facts.ansible_facts.ansible_distribution_major_version }}
-          {% else %}
-            0
-          {% endif %}
-        distro_minor: >-
-          {% if os_facts.ansible_facts is defined and os_facts.ansible_facts.ansible_distribution_minor_version is defined %}
-            {{ os_facts.ansible_facts.ansible_distribution_minor_version }}
-          {% else %}
-            0
-          {% endif %}
-      tags: always
+        target_profile_pattern: "ssg-{{ safe_distro_name }}{{ distro_version }}-ds.xml"
+      tags: scan
 
-    # Task 3: Create formatted version string (e.g., ubuntu2204)
-    - name: Generate formatted OS identifier
-      ansible.builtin.set_fact:
-        formatted_os_id: "{{ distro_name }}{{ distro_major }}{{ '%02d' % distro_minor|int }}"
-      tags: always
-
-    # Task 4: Debug OS information (optional)
-    - name: Display detected OS information
+    - name: Show profile detection info
       ansible.builtin.debug:
         msg: >-
-          OS Name: {{ distro_name }}
-          Version: {{ distro_major }}.{{ distro_minor }}
-          Formatted: {{ formatted_os_id }}
-      when: false  # Set to true for debugging
-      tags: always
-
+          Detected: {{ safe_distro_name }} {{ distro_version }}
+          Profile Pattern: {{ target_profile_pattern }}
+      when: false  # Enable for debugging
+      tags: scan
+    
     # Task 2: Profile handling with bulletproof validation
     - name: Create SCAP directory structure
       ansible.builtin.file:

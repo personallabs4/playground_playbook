@@ -428,7 +428,8 @@
         
         # Get available profile IDs and select appropriate one
         echo "Getting available profile IDs..."
-        PROFILE_ID=(oscap info "$PROFILE_FILE" | grep -A1 "CIS.*Level 2.*Server" | grep "Id:" | awk '{print $2}')
+        # PROFILE_ID=(oscap info "$PROFILE_FILE" | grep -A1 "CIS.*Level 2.*Server" | grep "Id:" | awk '{print $2}')
+        PROFILE_ID="$(oscap info "$PROFILE_FILE" | grep -A1 "CIS.*Level 2.*Server" | grep "Id:" | awk '{print $2}')"
         
         echo "Using profile ID: $PROFILE_ID"
         

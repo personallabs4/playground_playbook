@@ -27,27 +27,101 @@
       ignore_errors: yes
       tags: setup
 
-    # Task 2: Install OpenSCAP packages
-    - name: Install OpenSCAP packages (Debian/Ubuntu)
+    # Task 2: Install OpenSCAP packages based on OS and version
+    - name: Install OpenSCAP packages for Ubuntu < 24.04
       ansible.builtin.package:
         name:
           - openscap-utils
           - libopenscap8
-          - openscap-scanner
         state: present
-      when: ansible_os_family == "Debian"
+      when: 
+        - ansible_os_family == "Debian"
+        - ansible_distribution | lower == "ubuntu"
+        - ansible_distribution_major_version | int < 24
+      register: ubuntu_old_install
       ignore_errors: yes
       tags: setup
 
-    - name: Install OpenSCAP packages (RHEL/CentOS/Rocky/Alma)
+    - name: Install OpenSCAP packages for Ubuntu >= 24.04
+      ansible.builtin.package:
+        name:
+          - openscap-scanner
+          - openscap-utils
+        state: present
+      when: 
+        - ansible_os_family == "Debian"
+        - ansible_distribution | lower == "ubuntu"
+        - ansible_distribution_major_version | int >= 24
+      register: ubuntu_new_install
+      ignore_errors: yes
+      tags: setup
+
+    - name: Install OpenSCAP packages for Debian (non-Ubuntu)
+      ansible.builtin.package:
+        name:
+          - openscap-utils
+          - libopenscap8
+        state: present
+      when: 
+        - ansible_os_family == "Debian"
+        - ansible_distribution | lower != "ubuntu"
+      register: debian_install
+      ignore_errors: yes
+      tags: setup
+
+    - name: Install OpenSCAP packages for AlmaLinux
       ansible.builtin.package:
         name:
           - openscap-scanner
           - scap-security-guide
           - openscap-utils
         state: present
-      when: ansible_os_family == "RedHat"
+      when: 
+        - ansible_os_family == "RedHat"
+        - ansible_distribution | lower in ['almalinux', 'alma']
+      register: alma_install
       ignore_errors: yes
+      tags: setup
+
+    - name: Install OpenSCAP packages for other RHEL-based systems
+      ansible.builtin.package:
+        name:
+          - openscap-scanner
+          - scap-security-guide
+          - openscap-utils
+        state: present
+      when: 
+        - ansible_os_family == "RedHat"
+        - ansible_distribution | lower not in ['almalinux', 'alma']
+      register: rhel_install
+      ignore_errors: yes
+      tags: setup
+
+    - name: Display OpenSCAP installation results
+      ansible.builtin.debug:
+        msg: |
+          OpenSCAP Installation Results:
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - OS Family: {{ ansible_os_family }}
+          - Package Installation Status:
+            {% if ansible_os_family == "Debian" and ansible_distribution | lower == "ubuntu" %}
+              {% if ansible_distribution_major_version | int < 24 %}
+                Ubuntu < 24.04: {{ 'Success' if (ubuntu_old_install is defined and ubuntu_old_install is succeeded) else 'Failed' }}
+                Packages: openscap-utils, libopenscap8
+              {% else %}
+                Ubuntu >= 24.04: {{ 'Success' if (ubuntu_new_install is defined and ubuntu_new_install is succeeded) else 'Failed' }}
+                Packages: openscap-scanner, openscap-utils
+              {% endif %}
+            {% elif ansible_os_family == "Debian" %}
+              Debian: {{ 'Success' if (debian_install is defined and debian_install is succeeded) else 'Failed' }}
+              Packages: openscap-utils, libopenscap8
+            {% elif ansible_distribution | lower in ['almalinux', 'alma'] %}
+              AlmaLinux: {{ 'Success' if (alma_install is defined and alma_install is succeeded) else 'Failed' }}
+              Packages: openscap-scanner, scap-security-guide, openscap-utils
+            {% elif ansible_os_family == "RedHat" %}
+              RHEL-based: {{ 'Success' if (rhel_install is defined and rhel_install is succeeded) else 'Failed' }}
+              Packages: openscap-scanner, scap-security-guide, openscap-utils
+            {% endif %}
       tags: setup
 
     # Task 3: Gather OS information
@@ -150,54 +224,104 @@
         scan_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
       tags: scan
 
-    # Task 9: Execute OpenSCAP scan (simple version)
+    # Task 9: Execute OpenSCAP scan with improved error handling
+    - name: Check OpenSCAP installation
+      ansible.builtin.shell: |
+        echo "=== OpenSCAP Installation Check ==="
+        echo "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+        
+        # Check if oscap command exists
+        if command -v oscap >/dev/null 2>&1; then
+          echo "✓ oscap command found: $(which oscap)"
+          echo "✓ oscap version: $(oscap --version 2>/dev/null | head -1 || echo 'Unknown')"
+        else
+          echo "✗ oscap command not found"
+          echo "Available OpenSCAP related packages:"
+          {% if ansible_os_family == "Debian" %}
+          dpkg -l | grep -i openscap || echo "No OpenSCAP packages found"
+          {% else %}
+          rpm -qa | grep -i openscap || echo "No OpenSCAP packages found"
+          {% endif %}
+          exit 1
+        fi
+        
+        # Check profile file
+        echo "=== Profile File Check ==="
+        echo "Expected profile: {{ profile_path }}"
+        if [ -f "{{ profile_path }}" ]; then
+          echo "✓ Profile file exists"
+          echo "✓ File size: $(stat -c%s {{ profile_path }} 2>/dev/null || echo 'Unknown')"
+        else
+          echo "✗ Profile file not found"
+          echo "Searching for alternative profiles..."
+          find /usr/share {{ scap_profiles_dir }} -name "*ds.xml" -type f 2>/dev/null | head -5 || echo "No profiles found"
+          exit 1
+        fi
+        
+        echo "=== Ready to scan ==="
+      register: precheck_result
+      ignore_errors: yes
+      tags: scan
+
+    - name: Display pre-check results
+      ansible.builtin.debug:
+        msg: "{{ precheck_result.stdout_lines | default(['Pre-check failed']) }}"
+      tags: scan
+
     - name: Execute OpenSCAP scan
       ansible.builtin.shell: |
-        # Check if oscap is available
-        if ! command -v oscap >/dev/null 2>&1; then
-          echo "ERROR: oscap command not found"
-          exit 1
-        fi
+        echo "=== Starting OpenSCAP Scan ==="
+        echo "Timestamp: {{ scan_timestamp }}"
+        echo "Profile: {{ profile_path }}"
         
-        # Check if profile file exists
-        if [ ! -f "{{ profile_path }}" ]; then
-          echo "ERROR: Profile file not found: {{ profile_path }}"
-          exit 1
-        fi
+        # Get first available profile from the datastream
+        echo "=== Getting available profiles ==="
+        AVAILABLE_PROFILES=$(oscap info "{{ profile_path }}" 2>/dev/null | grep "^[[:space:]]*Profile:" | head -5)
+        echo "Available profiles:"
+        echo "$AVAILABLE_PROFILES"
         
-        echo "Using profile: {{ profile_path }}"
+        # Select first profile
+        PROFILE_ID=$(echo "$AVAILABLE_PROFILES" | head -1 | awk '{print $2}')
         
-        # Get first available profile
-        PROFILE=$(oscap info "{{ profile_path }}" 2>/dev/null | grep "Profile:" | head -1 | awk '{print $2}' || echo "")
-        
-        if [ -z "$PROFILE" ]; then
+        if [ -z "$PROFILE_ID" ]; then
           echo "ERROR: No profiles found in datastream"
           exit 1
         fi
         
-        echo "Using profile ID: $PROFILE"
+        echo "Using profile: $PROFILE_ID"
         
-        # Run the scan
+        # Execute scan
+        echo "=== Executing scan ==="
         oscap xccdf eval \
-          --profile "$PROFILE" \
+          --profile "$PROFILE_ID" \
           --results-arf "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" \
           --report "{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html" \
           "{{ profile_path }}"
         
-        RC=$?
-        echo "Scan completed with return code: $RC"
+        SCAN_RC=$?
+        echo "=== Scan completed with return code: $SCAN_RC ==="
         
-        # Check if files were created
-        if [ -f "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" ]; then
-          echo "ARF file created: $(ls -lh {{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml)"
+        # Verify output files
+        ARF_FILE="{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
+        HTML_FILE="{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html"
+        
+        if [ -f "$ARF_FILE" ]; then
+          ARF_SIZE=$(stat -c%s "$ARF_FILE" 2>/dev/null || echo "0")
+          echo "✓ ARF file created: $ARF_FILE ($ARF_SIZE bytes)"
+        else
+          echo "✗ ARF file not created"
         fi
         
-        if [ -f "{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html" ]; then
-          echo "HTML report created: $(ls -lh {{ scap_reports_dir }}/{{ scan_timestamp }}-report.html)"
+        if [ -f "$HTML_FILE" ]; then
+          HTML_SIZE=$(stat -c%s "$HTML_FILE" 2>/dev/null || echo "0")
+          echo "✓ HTML report created: $HTML_FILE ($HTML_SIZE bytes)"
+        else
+          echo "✗ HTML report not created"
         fi
         
-        exit $RC
+        exit $SCAN_RC
       register: oscap_result
+      when: precheck_result.rc == 0
       ignore_errors: yes
       tags: scan
 

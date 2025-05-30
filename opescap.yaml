@@ -273,10 +273,41 @@
       when: profile_search_detailed is defined
       tags: scan
 
-    # Task 8: Generate timestamp
-    - name: Generate scan timestamp
-      ansible.builtin.set_fact:
-        scan_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    # Task 8b: Debug profile file status
+    - name: Debug profile file status
+      ansible.builtin.shell: |
+        echo "=== DEBUGGING PROFILE FILES ==="
+        echo "Expected profile: {{ profile_path }}"
+        echo "Profile name: {{ profile_name }}"
+        echo ""
+        
+        # Check if file exists
+        if [ -f "{{ profile_path }}" ]; then
+          echo "✓ Profile file exists"
+          ls -la "{{ profile_path }}"
+        else
+          echo "✗ Profile file NOT found: {{ profile_path }}"
+        fi
+        
+        echo ""
+        echo "Contents of {{ scap_profiles_dir }}:"
+        ls -la "{{ scap_profiles_dir }}/" 2>/dev/null || echo "Directory does not exist"
+        
+        echo ""
+        echo "Available profile files:"
+        find {{ scap_profiles_dir }} /usr/share -name "*ds.xml" -type f 2>/dev/null | head -10
+        
+        echo ""
+        echo "Testing oscap command:"
+        which oscap 2>/dev/null || echo "oscap not found"
+        oscap --version 2>/dev/null || echo "Cannot get oscap version"
+      register: debug_profile
+      ignore_errors: yes
+      tags: scan
+
+    - name: Show debug results
+      ansible.builtin.debug:
+        msg: "{{ debug_profile.stdout_lines }}"
       tags: scan
 
     # Task 9: Execute OpenSCAP scan (simplified and more reliable)
@@ -302,128 +333,39 @@
       ignore_errors: yes
       tags: scan
 
-    - name: Execute OpenSCAP scan
+    # Task 10: Very simple OpenSCAP scan
+    - name: Execute OpenSCAP scan (simplified)
       ansible.builtin.shell: |
-        echo "Starting scan with:"
-        echo "- Profile: {{ profile_path }}"
-        echo "- Timestamp: {{ scan_timestamp }}"
-        echo ""
+        echo "=== SIMPLE OSCAP SCAN ==="
+        echo "Profile: {{ profile_path }}"
         
-        # Check if profile file exists and is readable
-        if [ ! -f "{{ profile_path }}" ]; then
-          echo "ERROR: Profile file does not exist: {{ profile_path }}"
-          exit 1
-        fi
+        # Get ANY profile from the file
+        FIRST_PROFILE=$(oscap info "{{ profile_path }}" | grep "Profile:" | head -1 | awk '{print $2}')
         
-        if [ ! -r "{{ profile_path }}" ]; then
-          echo "ERROR: Cannot read profile file: {{ profile_path }}"
-          exit 1
-        fi
+        echo "Using profile: $FIRST_PROFILE"
         
-        echo "Profile file check: OK"
-        
-        # Test oscap info command
-        echo "Testing oscap info command..."
-        if ! oscap info "{{ profile_path }}" >/dev/null 2>&1; then
-          echo "ERROR: oscap cannot read profile file"
-          echo "Testing with verbose error:"
-          oscap info "{{ profile_path }}" 2>&1 || true
-          exit 1
-        fi
-        
-        # Get available profiles
-        echo "Getting available profiles..."
-        PROFILES=$(oscap info "{{ profile_path }}" 2>/dev/null | grep "Profile:" | head -5)
-        
-        if [ -z "$PROFILES" ]; then
-          echo "ERROR: No profiles found in datastream"
-          echo "Datastream info:"
-          oscap info "{{ profile_path }}" 2>&1 | head -20 || true
-          exit 1
-        fi
-        
-        echo "Available profiles:"
-        echo "$PROFILES"
-        echo ""
-        
-        # Get first profile ID
-        PROFILE_ID=$(echo "$PROFILES" | head -1 | awk '{print $2}')
-        
-        if [ -z "$PROFILE_ID" ]; then
-          echo "ERROR: Could not extract profile ID"
-          exit 1
-        fi
-        
-        echo "Selected profile ID: $PROFILE_ID"
-        echo ""
-        
-        # Prepare output files
-        ARF_FILE="{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
-        HTML_FILE="{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html"
-        
-        echo "Output files:"
-        echo "- ARF: $ARF_FILE"
-        echo "- HTML: $HTML_FILE"
-        echo ""
-        
-        # Run scan (allow it to fail, capture return code)
-        echo "Starting OpenSCAP evaluation..."
-        set +e  # Allow commands to fail
-        
+        # Simple scan command
         oscap xccdf eval \
-          --profile "$PROFILE_ID" \
-          --results-arf "$ARF_FILE" \
-          --report "$HTML_FILE" \
+          --profile "$FIRST_PROFILE" \
+          --results-arf "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" \
           "{{ profile_path }}"
         
-        SCAN_RC=$?
-        echo ""
-        echo "OpenSCAP scan completed with return code: $SCAN_RC"
+        echo "Scan finished with RC: $?"
         
-        # Check what files were created
-        echo ""
-        echo "Checking output files:"
-        if [ -f "$ARF_FILE" ]; then
-          ARF_SIZE=$(stat -c%s "$ARF_FILE" 2>/dev/null || echo "unknown")
-          echo "✓ ARF file created: $ARF_SIZE bytes"
+        # Check if ARF file was created
+        if [ -f "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" ]; then
+          echo "ARF file created successfully"
         else
-          echo "✗ ARF file not created"
+          echo "ARF file NOT created"
         fi
-        
-        if [ -f "$HTML_FILE" ]; then
-          HTML_SIZE=$(stat -c%s "$HTML_FILE" 2>/dev/null || echo "unknown")
-          echo "✓ HTML file created: $HTML_SIZE bytes"
-        else
-          echo "✗ HTML file not created"
-        fi
-        
-        # List all files in reports directory
-        echo ""
-        echo "Files in reports directory:"
-        ls -la "{{ scap_reports_dir }}/" 2>/dev/null || echo "Cannot list directory"
-        
-        # Return code explanation
-        echo ""
-        echo "Return code explanation:"
-        case $SCAN_RC in
-          0) echo "RC 0: All rules passed" ;;
-          1) echo "RC 1: Error occurred" ;;
-          2) echo "RC 2: Some rules failed (normal for compliance scans)" ;;
-          *) echo "RC $SCAN_RC: Unexpected return code" ;;
-        esac
-        
-        # Exit with original return code
-        exit $SCAN_RC
       register: oscap_result
       when: 
-        - prereq_check is defined 
-        - prereq_check.rc == 0
-        - profile_path is defined 
-        - profile_path != ""
+        - simple_check is defined 
+        - simple_check.rc == 0
       ignore_errors: yes
       tags: scan
 
-    # Task 10: Display scan results
+    # Task 11: Display scan results
     - name: Display scan results
       ansible.builtin.debug:
         msg: |
@@ -432,7 +374,7 @@
           - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
           - Profile: {{ profile_name }}
           - Profile Path: {{ profile_path | default('Not found') }}
-          - Prerequisites: {{ 'OK' if (prereq_check is defined and prereq_check.rc == 0) else 'Failed' }}
+          - Prerequisites: {{ 'OK' if (simple_check is defined and simple_check.rc == 0) else 'Failed' }}
           - Scan Status: {{ 'Success' if (oscap_result is defined and oscap_result.rc is defined and oscap_result.rc in [0, 2]) else 'Failed/Skipped' }}
           
           {% if oscap_result is defined and oscap_result.stdout is defined %}
@@ -446,7 +388,7 @@
           {% endif %}
       tags: scan
 
-    # Task 11: Check if ARF file exists and fix timezone
+    # Task 12: Check if ARF file exists and fix timezone
     - name: Check ARF file status
       ansible.builtin.stat:
         path: "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
@@ -465,7 +407,7 @@
       ignore_errors: yes
       tags: post_scan
 
-    # Task 12: Upload report (simplified)
+    # Task 13: Upload report (simplified)
     - name: Upload ARF report
       ansible.builtin.shell: |
         ARF_FILE="{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"

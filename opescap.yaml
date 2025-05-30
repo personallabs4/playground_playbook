@@ -31,6 +31,7 @@
     - name: Install OpenSCAP packages for Ubuntu < 24.04
       ansible.builtin.package:
         name:
+          - openscap-utils
           - libopenscap8
         state: present
       when: 
@@ -208,34 +209,34 @@
       ignore_errors: yes
       tags: setup
 
-    # Task 8: Copy OS-specific SCAP profiles from Ansible controller
+    # Task 8: Set search patterns for OS-specific profiles
+    - name: Set search patterns for OS-specific profiles
+      ansible.builtin.set_fact:
+        profile_search_patterns: >-
+          {%- if ansible_distribution | lower == 'ubuntu' -%}
+            ["*ubuntu{{ ansible_distribution_major_version }}*ds.xml", "*ubuntu*ds.xml"]
+          {%- elif ansible_distribution | lower == 'almalinux' -%}
+            ["*almalinux{{ ansible_distribution_major_version }}*ds.xml", "*almalinux*ds.xml", "*rhel{{ ansible_distribution_major_version }}*ds.xml", "*rhel*ds.xml"]
+          {%- elif ansible_distribution | lower in ['rocky', 'rockylinux'] -%}
+            ["*rocky{{ ansible_distribution_major_version }}*ds.xml", "*rocky*ds.xml", "*rhel{{ ansible_distribution_major_version }}*ds.xml", "*rhel*ds.xml"]
+          {%- elif ansible_distribution | lower in ['centos', 'rhel', 'redhat'] -%}
+            ["*rhel{{ ansible_distribution_major_version }}*ds.xml", "*rhel*ds.xml"]
+          {%- else -%}
+            ["*rhel*ds.xml"]
+          {%- endif -%}
+      when: 
+        - os_specific_local_profile is not defined or os_specific_local_profile | length == 0
+      tags: setup
+
     - name: Find OS-specific profiles on Ansible controller
       ansible.builtin.find:
         paths: "/opt/scap_profiles"
-        patterns: 
-          {% if ansible_distribution | lower == 'ubuntu' %}
-          - "*ubuntu{{ ansible_distribution_major_version }}*ds.xml"
-          - "*ubuntu*ds.xml"
-          {% elif ansible_distribution | lower == 'almalinux' %}
-          - "*almalinux{{ ansible_distribution_major_version }}*ds.xml"
-          - "*almalinux*ds.xml"
-          - "*rhel{{ ansible_distribution_major_version }}*ds.xml"
-          - "*rhel*ds.xml"
-          {% elif ansible_distribution | lower in ['rocky', 'rockylinux'] %}
-          - "*rocky{{ ansible_distribution_major_version }}*ds.xml"
-          - "*rocky*ds.xml"
-          - "*rhel{{ ansible_distribution_major_version }}*ds.xml"
-          - "*rhel*ds.xml"
-          {% elif ansible_distribution | lower in ['centos', 'rhel', 'redhat'] %}
-          - "*rhel{{ ansible_distribution_major_version }}*ds.xml"
-          - "*rhel*ds.xml"
-          {% else %}
-          - "*rhel*ds.xml"
-          {% endif %}
+        patterns: "{{ profile_search_patterns }}"
         file_type: file
       delegate_to: localhost
       when: 
         - os_specific_local_profile is not defined or os_specific_local_profile | length == 0
+        - profile_search_patterns is defined
       register: controller_profiles
       ignore_errors: yes
       tags: setup
@@ -259,6 +260,7 @@
         msg: |
           Profiles copied from Ansible controller:
           - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - Search patterns: {{ profile_search_patterns | default([]) }}
           - Profiles found on controller: {{ controller_profiles.files | length if (controller_profiles.files is defined) else 0 }}
           - Files copied: {{ controller_profiles.files | map(attribute='path') | map('basename') | list if (controller_profiles.files is defined) else [] }}
       when: 

@@ -4,10 +4,10 @@
   become: yes
   vars:
     scap_reports_dir: "/opt/reports"
-    scap_profiles_src: "/opt/scap_profiles"  # Source directory on control node
+    scap_profiles_dir: "/opt/scap_profiles"
     scap_guide_version: "0.1.76"
     timezone_offset: "+07:00"
-    report_server: "http://10.20.11.117:2112"   
+    report_server: "http://10.20.11.117:2112" 
 
   tasks:
     # Task 1: OS detection and profile selection
@@ -21,22 +21,23 @@
       ignore_errors: yes
       tags: always
 
-    - name: Set Ubuntu-specific profile names
+    # Task 2: Set profile name with STRICT whitespace control
+    - name: Set Ubuntu profile name (whitespace-safe)
       ansible.builtin.set_fact:
         target_profile: >-
-          {% if os_facts.ansible_facts.ansible_distribution | lower == 'ubuntu' %}
-            {% if os_facts.ansible_facts.ansible_distribution_major_version == '20' %}
+          {%- if os_facts.ansible_facts.ansible_distribution | lower == 'ubuntu' -%}
+            {%- if os_facts.ansible_facts.ansible_distribution_major_version == '20' -%}
               ssg-ubuntu2004-ds.xml
-            {% elif os_facts.ansible_facts.ansible_distribution_major_version == '22' %}
+            {%- elif os_facts.ansible_facts.ansible_distribution_major_version == '22' -%}
               ssg-ubuntu2204-ds.xml
-            {% elif os_facts.ansible_facts.ansible_distribution_major_version == '24' %}
-              ssg-ubuntu2404-ds.xml  # Special case for Ubuntu 24
-            {% else %}
-              ssg-ubuntu2004-ds.xml  # Default for other Ubuntu versions
-            {% endif %}
-          {% else %}
+            {%- elif os_facts.ansible_facts.ansible_distribution_major_version == '24' -%}
+              ssg-ubuntu2004-ds.xml
+            {%- else -%}
+              ssg-ubuntu2004-ds.xml
+            {%- endif -%}
+          {%- else -%}
             ssg-{{ (os_facts.ansible_facts.ansible_distribution | default('unknown')) | lower }}{{ os_facts.ansible_facts.ansible_distribution_major_version | default('0') }}-ds.xml
-          {% endif %}
+          {%- endif -%}
       tags: scan
 
     # Task 3: Create CLEAN profile path

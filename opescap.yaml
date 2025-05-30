@@ -11,16 +11,53 @@
 
   tasks:
     # Task 1: Install OpenSCAP packages based on OS family
-    - name: Install OpenSCAP packages for Debian/Ubuntu systems
+    - name: Install core OpenSCAP packages for Debian/Ubuntu systems
       ansible.builtin.package:
         name:
           - libopenscap8
-          - ssg-base
-          - ssg-debderived
-          - ssg-debian
-          - ssg-ubuntu
+          - openscap-utils
         state: present
       when: ansible_os_family == "Debian"
+      ignore_errors: yes
+      tags: setup
+
+    # Task 1a: Alternative - Download SCAP Security Guide if packages not available
+    - name: Download SCAP Security Guide for Ubuntu (fallback)
+      ansible.builtin.get_url:
+        url: "https://github.com/ComplianceAsCode/content/releases/download/v{{ scap_guide_version }}/scap-security-guide-{{ scap_guide_version }}.zip"
+        dest: "/tmp/scap-security-guide.zip"
+        mode: '0644'
+        timeout: 30
+      when: 
+        - ansible_os_family == "Debian"
+        - ansible_distribution | lower == "ubuntu"
+      ignore_errors: yes
+      tags: setup
+
+    - name: Extract SCAP Security Guide (fallback)
+      ansible.builtin.unarchive:
+        src: "/tmp/scap-security-guide.zip"
+        dest: "/tmp/"
+        remote_src: yes
+        creates: "/tmp/scap-security-guide-{{ scap_guide_version }}"
+      when: 
+        - ansible_os_family == "Debian"
+        - ansible_distribution | lower == "ubuntu"
+      ignore_errors: yes
+      tags: setup
+
+    - name: Copy Ubuntu SCAP profiles to target directory (fallback)
+      ansible.builtin.copy:
+        src: "/tmp/scap-security-guide-{{ scap_guide_version }}/{{ item }}"
+        dest: "{{ scap_profiles_dir }}/{{ item }}"
+        remote_src: yes
+        mode: '0644'
+      loop:
+        - "ssg-ubuntu2004-ds.xml"
+        - "ssg-ubuntu2204-ds.xml"
+      when: 
+        - ansible_os_family == "Debian"
+        - ansible_distribution | lower == "ubuntu"
       ignore_errors: yes
       tags: setup
 
@@ -104,20 +141,23 @@
       when: local_profile_check.stat.exists
       tags: setup
 
-    # Task 6: Check for system-installed profiles with RHEL-based OS support
+    # Task 6: Check for system-installed profiles with multiple fallback locations
     - name: Check for system-installed SCAP profiles
       ansible.builtin.find:
         paths:
           - "/usr/share/xml/scap/ssg/content"
           - "/usr/share/scap-security-guide"
           - "/usr/share/xml/scap"
+          - "/usr/share/openscap"
+          - "{{ scap_profiles_dir }}"
         patterns: 
           - "*{{ target_profile }}*"
           - "*rhel*ds.xml"
           - "*centos*ds.xml"
+          - "*ubuntu*ds.xml"
         recurse: yes
       register: system_profiles
-      when: not local_profile_check.stat.exists
+      when: not (local_profile_check.stat.exists | default(false))
       tags: setup
 
     # Task 7: Set final profile path
@@ -208,7 +248,14 @@
       when: scan_successful | default(false)
       tags: post_scan
 
-    # Task 13: Upload report to server with better error handling
+    # Task 13: Upload report to server with proper file handling
+    - name: Check if ARF report exists before upload
+      ansible.builtin.stat:
+        path: "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
+      register: arf_file_check
+      when: scan_successful | default(false)
+      tags: post_scan
+
     - name: Upload compliance report
       ansible.builtin.uri:
         url: "{{ report_server }}/upload"
@@ -216,11 +263,14 @@
         body_format: form-multipart
         body:
           target: "{{ inventory_hostname }}"
-          file: "{{ lookup('file', scap_reports_dir + '/' + scan_timestamp + '-arf.xml') }}"
+          report: "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
+        src: "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
         timeout: 60
         validate_certs: no
       register: upload_result
-      when: scan_successful | default(false)
+      when: 
+        - scan_successful | default(false)
+        - arf_file_check.stat.exists | default(false)
       ignore_errors: yes
       tags: post_scan
 

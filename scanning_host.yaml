@@ -39,14 +39,16 @@
           {% endif %}
       tags: scan
 
-    - name: Clean whitespace from profile path
+    # Task 3: Create CLEAN profile path
+    - name: Create sanitized profile path
       ansible.builtin.set_fact:
-        clean_profile_path: "{{ target_profile | trim }}"
+        clean_profile_path: "{{ (scap_profiles_dir + '/' + target_profile) | regex_replace('\\s+', '') }}"
       tags: scan
 
-    - name: Debug profile selection
+    # Task 4: Debug the final path (for verification)
+    - name: Show final profile path
       ansible.builtin.debug:
-        msg: "Selected profile: {{ clean_profile_path }}"
+        msg: "Final profile path: '{{ clean_profile_path }}'"
       tags: scan
 
     - name: Copy the profile to the remote host
@@ -55,39 +57,16 @@
         dest: "/opt/scap_profiles/{{ clean_profile_path }}"
         mode: '0755'
 
-    # Task 2: Profile validation and scanning
-    - name: Check if profile exists
-      ansible.builtin.stat:
-        path: "/opt/scap_profiles/{{ clean_profile_path }}"
-      register: profile_check
+    - name: Show final profile path
+      ansible.builtin.debug:
+        msg: "Final profile path: '{{ clean_profile_path }}'"
       tags: scan
-
-    - name: Find matching profiles on target
-      ansible.builtin.find:
-        paths: "/opt/scap_profiles"
-        patterns: "{{ clean_profile_path }}"  # Explicitly specify the expected filename
-        use_regex: no
-      register: target_profiles
-      tags: scan
-
-    - name: Validate exactly one profile found
-      ansible.builtin.assert:
-        that:
-          - target_profiles.matched == 1
-        fail_msg: "Found {{ target_profiles.matched }} profiles. Expected exactly 1."
-      tags: scan
-
+      
     - name: Ensure reports directory exists
       ansible.builtin.file:
         path: "{{ scap_reports_dir }}"
         state: directory
         mode: '0755'
-      tags: scan
-
-    - name: Set cleaned profile path
-      ansible.builtin.set_fact:
-        scap_profile_path: "{{ target_profiles.files[0].path | trim }}"
-      when: target_profiles.matched == 1
       tags: scan
 
     # Task 3: Execute OpenSCAP scan

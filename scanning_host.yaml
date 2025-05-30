@@ -42,7 +42,6 @@
     - name: Debug profile selection
       ansible.builtin.debug:
         msg: "Selected profile: {{ target_profile }}"
-      when: false  # Set to true for debugging
       tags: scan
 
     - name: Copy the profile to the remote host

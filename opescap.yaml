@@ -523,7 +523,7 @@
         curl -X POST "{{ report_server }}/upload" \
           -F "target={{ inventory_hostname }}" \
           -F "report=@{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
-      register: upload_result
+      register: upload_results
       when: adjust_report is defined
       ignore_errors: yes
       tags: post_scan
@@ -536,8 +536,6 @@
         timeout: 30
       when: 
         - upload_results is defined
-        - upload_results.results is defined
-        - upload_results.results | selectattr('status', 'defined') | selectattr('status', 'equalto', 200) | list | length > 0
       ignore_errors: yes
       tags: post_scan
 

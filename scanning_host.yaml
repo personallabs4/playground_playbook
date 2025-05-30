@@ -11,45 +11,54 @@
     
   tasks:
     # Task 1: Check OS and mark host
-    - name: Gather detailed OS facts
+    - name: Gather mandatory OS facts
       ansible.builtin.setup:
-        gather_subset:
-          - distribution
-          - os_family
+        gather_subset: min
         filter: "ansible_distribution*"
       register: os_facts
       ignore_errors: yes
       tags: always
 
-    # Task 2: Create formatted version variables
-    - name: Set version formatting variables
+    # Task 2: Safe variable definition with defaults
+    - name: Set base distribution name
       ansible.builtin.set_fact:
-        distro_name: "{{ (os_facts.ansible_facts.ansible_distribution | default('unknown')) | lower }}"
-        # Handle different version formats:
-        distro_version: >-
-          {% if os_facts.ansible_facts.ansible_distribution_release is defined %}
-            {{ os_facts.ansible_facts.ansible_distribution_release | regex_replace('[^0-9]', '') }}
-          {% elif os_facts.ansible_facts.ansible_distribution_version is defined %}
-            {{ os_facts.ansible_facts.ansible_distribution_version | regex_replace('(\\d+)\\.?(\\d+).*', '\\1\\2') }}
+        distro_name: >-
+          {% if os_facts.ansible_facts is defined and os_facts.ansible_facts.ansible_distribution is defined %}
+            {{ os_facts.ansible_facts.ansible_distribution | lower }}
           {% else %}
-            {{ os_facts.ansible_facts.ansible_distribution_major_version | default('0') }}
+            unknown
           {% endif %}
-        formatted_os_id: "{{ distro_name }}{{ distro_version }}"
       tags: always
 
-    # Example outputs:
-    # Ubuntu 22.04 → ubuntu2204
-    # RHEL 8.5 → rhel85
-    # Debian 12 → debian12
+    - name: Set distribution version components
+      ansible.builtin.set_fact:
+        distro_major: >-
+          {% if os_facts.ansible_facts is defined and os_facts.ansible_facts.ansible_distribution_major_version is defined %}
+            {{ os_facts.ansible_facts.ansible_distribution_major_version }}
+          {% else %}
+            0
+          {% endif %}
+        distro_minor: >-
+          {% if os_facts.ansible_facts is defined and os_facts.ansible_facts.ansible_distribution_minor_version is defined %}
+            {{ os_facts.ansible_facts.ansible_distribution_minor_version }}
+          {% else %}
+            0
+          {% endif %}
+      tags: always
 
-    # Task 3: Debug formatted variables (optional)
-    - name: Show formatted OS information
+    # Task 3: Create formatted version string (e.g., ubuntu2204)
+    - name: Generate formatted OS identifier
+      ansible.builtin.set_fact:
+        formatted_os_id: "{{ distro_name }}{{ distro_major }}{{ '%02d' % distro_minor|int }}"
+      tags: always
+
+    # Task 4: Debug OS information (optional)
+    - name: Display detected OS information
       ansible.builtin.debug:
-        msg: >
-          Detected OS: {{ distro_name }}
-          Full version: {{ os_facts.ansible_facts.ansible_distribution_version | default('N/A') }}
-          Formatted version: {{ distro_version }}
-          Final OS ID: {{ formatted_os_id }}
+        msg: >-
+          OS Name: {{ distro_name }}
+          Version: {{ distro_major }}.{{ distro_minor }}
+          Formatted: {{ formatted_os_id }}
       when: false  # Set to true for debugging
       tags: always
 

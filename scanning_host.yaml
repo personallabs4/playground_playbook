@@ -51,7 +51,6 @@
         msg: >-
           Detected: {{ safe_distro_name }} {{ distro_version }}
           Profile Pattern: {{ target_profile_pattern }}
-      when: false  # Enable for debugging
       tags: scan
     
     # Task 2: Profile handling with bulletproof validation

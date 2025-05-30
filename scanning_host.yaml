@@ -7,20 +7,7 @@
     scap_profiles_src: "/opt/scap_profiles"  # Source directory on control node
     scap_guide_version: "0.1.76"
     timezone_offset: "+07:00"
-    report_server: "http://10.20.11.117:2112"
-    
-  tasks:
-    # Task 1: Check OS and mark host
-    ---
-- name: OpenSCAP Security Compliance Scan
-  hosts: all
-  become: yes
-  vars:
-    scap_reports_dir: "/opt/reports"
-    scap_profiles_src: "/opt/scap_profiles"
-    scap_guide_version: "0.1.76"
-    timezone_offset: "+07:00"
-    report_server: "http://10.20.11.117:2112"
+    report_server: "http://10.20.11.117:2112"   
 
   tasks:
     # Task 1: OS detection and profile selection

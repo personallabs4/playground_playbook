@@ -1,0 +1,155 @@
+---
+- name: OpenSCAP Security Compliance Scan
+  hosts: all
+  become: yes
+  vars:
+    scap_reports_dir: "/opt/reports"
+    scap_profiles_src: "/opt/scap_profiles"  # Source directory on control node
+    scap_guide_version: "0.1.76"
+    timezone_offset: "+07:00"
+    report_server: "http://10.20.11.117:2112"
+    
+  tasks:
+    # Task 1: Check OS and mark host
+    - name: Gather OS information
+      ansible.builtin.setup:
+        gather_subset: distribution
+      register: os_facts
+      tags: always
+
+    - name: Tag host based on OS
+      ansible.builtin.add_host:
+        name: "{{ inventory_hostname }}"
+        groups: "scanned_{{ os_facts.ansible_distribution | lower }}_{{ os_facts.ansible_distribution_major_version }}"
+      changed_when: false
+      tags: always
+
+    # Task 2: Copy appropriate OpenSCAP profile
+    - name: Find correct OpenSCAP profile
+      ansible.builtin.find:
+        paths: "/opt"
+        patterns: 
+          - "ssg-{{ os_facts.ansible_distribution | lower }}{{ os_facts.ansible_distribution_major_version }}*-ds.xml"
+        use_regex: yes
+      register: scap_profiles
+      failed_when: scap_profiles.matched == 0
+
+    - name: Validate only one profile found
+      ansible.builtin.assert:
+        that:
+          - scap_profiles.matched == 1
+        fail_msg: "Found multiple or no SCAP profiles for {{ os_facts.ansible_distribution }} {{ os_facts.ansible_distribution_major_version }}"
+      tags: scan
+
+    # Task 2: Smart Profile Selection with Copying
+    - name: Create SCAP profiles directory if missing
+      ansible.builtin.file:
+        path: "/opt/scap_profiles"
+        state: directory
+        mode: '0755'
+      tags: scan
+
+    - name: Find available SCAP profiles on control node
+      ansible.builtin.find:
+        paths: "{{ scap_profiles_src }}"
+        patterns: 
+          - "ssg-*.xml"
+        recurse: yes
+      register: available_profiles
+      delegate_to: localhost
+      run_once: true
+      tags: scan
+
+    - name: Determine target profile filename
+      ansible.builtin.set_fact:
+        target_profile: "ssg-{{ os_facts.ansible_distribution | lower }}{{ os_facts.ansible_distribution_major_version }}-ds.xml"
+      tags: scan
+
+    - name: Validate profile exists on control node
+      ansible.builtin.assert:
+        that: 
+          - target_profile in (available_profiles.files | map(attribute='path') | map('basename') | list)
+        fail_msg: "Required SCAP profile {{ target_profile }} not found in {{ scap_profiles_src }}"
+        success_msg: "Found profile {{ target_profile }} for {{ os_facts.ansible_distribution }} {{ os_facts.ansible_distribution_major_version }}"
+      tags: scan
+
+    - name: Copy SCAP profile to target host
+      ansible.builtin.copy:
+        src: "{{ scap_profiles_src }}/{{ target_profile }}"
+        dest: "/opt/{{ target_profile }}"
+        remote_src: false
+        owner: root
+        group: root
+        mode: '0644'
+      register: profile_copied
+      tags: scan
+
+    - name: Verify copied profile
+      ansible.builtin.stat:
+        path: "/opt/{{ target_profile }}"
+      register: profile_verify
+      failed_when: not profile_verify.stat.exists
+      tags: scan
+
+    # Task 3: Run OpenSCAP evaluation
+    - name: Create reports directory
+      ansible.builtin.file:
+        path: "{{ scap_reports_dir }}"
+        state: directory
+        mode: '0755'
+      tags: scan
+
+    - name: Execute OpenSCAP scan
+      ansible.builtin.command: >
+        oscap xccdf eval
+        --profile xccdf_org.ssgproject.content_profile_cis_level2_server
+        --results-arf "{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
+        "{{ scap_profiles.files[0].path }}"
+      register: oscap_scan
+      changed_when: "'Rule: Some rules failed.' in oscap_scan.stdout"
+      failed_when: 
+        - oscap_scan.rc != 0
+        - "'Rule: Some rules failed.' not in oscap_scan.stdout"
+      tags: scan
+
+    # Task 4: Fix timestamp in ARF report
+    - name: Adjust timezone in ARF report
+      ansible.builtin.shell: >
+        sed -i -E 's/([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})([^:+Z0-9]|")/\1{{ timezone_offset }}\2/g'
+        "{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
+      args:
+        executable: /bin/bash
+      when: oscap_scan is changed or oscap_scan is success
+      tags: post_scan
+
+    # Task 5: Upload report to server
+    - name: Upload compliance report
+      ansible.builtin.uri:
+        url: "{{ report_server }}/upload"
+        method: POST
+        body_format: form-multipart
+        headers:
+          Content-Type: "multipart/form-data"
+        body:
+          target: "{{ inventory_hostname }}"
+          report: "@{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
+      register: upload_result
+      when: oscap_scan is changed or oscap_scan is success
+      tags: post_scan
+
+    # Task 6: Trigger report rendering
+    - name: Trigger report generation
+      ansible.builtin.uri:
+        url: "{{ report_server }}/render"
+        method: GET
+      register: render_result
+      when: upload_result is defined and upload_result.status == 200
+      tags: post_scan
+
+  handlers:
+    - name: Clean up on failure
+      ansible.builtin.file:
+        path: "{{ scap_reports_dir }}"
+        state: absent
+      when: "'oscap_scan' in vars and oscap_scan is failed"
+      tags: cleanup

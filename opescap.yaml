@@ -346,27 +346,27 @@
       tags: scan
 
     # Task 10: Display scan results
-      - name: Display scan results
-        ansible.builtin.debug:
-          msg: |
-            OpenSCAP Scan Results:
-            - Host: {{ inventory_hostname }}
-            - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
-            - Profile: {{ profile_name }}
-            - Profile Path: {{ profile_path | default('Not found') }}
-            - Prerequisites: {{ 'OK' if (prereq_check is defined and prereq_check.rc == 0) else 'Failed' }}
-            - Scan Status: {{ 'Success' if (oscap_result is defined and oscap_result.rc is defined and oscap_result.rc in [0, 2]) else 'Failed/Skipped' }}
-            
-            {% if oscap_result is defined and oscap_result.stdout is defined %}
-            Scan Output:
-            {{ oscap_result.stdout }}
-            {% endif %}
-            
-            {% if oscap_result is defined and oscap_result.stderr is defined and oscap_result.stderr != '' %}
-            Scan Errors:
-            {{ oscap_result.stderr }}
-            {% endif %}
-        tags: scan
+    - name: Display scan results
+      ansible.builtin.debug:
+        msg: |
+          OpenSCAP Scan Results:
+          - Host: {{ inventory_hostname }}
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - Profile: {{ profile_name }}
+          - Profile Path: {{ profile_path | default('Not found') }}
+          - Prerequisites: {{ 'OK' if (prereq_check is defined and prereq_check.rc == 0) else 'Failed' }}
+          - Scan Status: {{ 'Success' if (oscap_result is defined and oscap_result.rc is defined and oscap_result.rc in [0, 2]) else 'Failed/Skipped' }}
+          
+          {% if oscap_result is defined and oscap_result.stdout is defined %}
+          Scan Output:
+          {{ oscap_result.stdout }}
+          {% endif %}
+          
+          {% if oscap_result is defined and oscap_result.stderr is defined and oscap_result.stderr != '' %}
+          Scan Errors:
+          {{ oscap_result.stderr }}
+          {% endif %}
+      tags: scan
 
     # Task 11: Check if ARF file exists and fix timezone
     - name: Check ARF file status

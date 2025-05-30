@@ -11,18 +11,42 @@
     
   tasks:
     # Task 1: Check OS and mark host
-    - name: Gather OS information
+    - name: Gather OS facts (minimal)
       ansible.builtin.setup:
-        gather_subset: distribution
+        gather_subset:
+          - distribution
+          - os_family
       register: os_facts
       tags: always
+
+    - name: Debug OS facts (for troubleshooting)
+      ansible.builtin.debug:
+        var: os_facts
+      when: false  # Set to true only for debugging
 
     - name: Tag host based on OS
       ansible.builtin.add_host:
         name: "{{ inventory_hostname }}"
-        groups: "scanned_{{ os_facts.ansible_distribution | lower }}_{{ os_facts.ansible_distribution_major_version }}"
+        groups: >-
+          scanned_{{
+            (os_facts.ansible_facts.get('ansible_distribution', 'unknown') | lower) ~ '_' ~
+            (os_facts.ansible_facts.get('ansible_distribution_major_version', '0'))
+          }}
+      vars:
+        safe_distro: "{{ os_facts.ansible_facts.get('ansible_distribution', 'unknown') | lower }}"
+        safe_version: "{{ os_facts.ansible_facts.get('ansible_distribution_major_version', '0') }}"
       changed_when: false
       tags: always
+
+    - name: Set target profile name safely
+      ansible.builtin.set_fact:
+        target_profile: >-
+          ssg-{{
+            (os_facts.ansible_facts.get('ansible_distribution', 'rhel') | lower) ~
+            (os_facts.ansible_facts.get('ansible_distribution_major_version', '8')) ~
+            '-ds.xml'
+          }}
+      tags: scan
 
     # Task 2: Copy appropriate OpenSCAP profile
     - name: Find correct OpenSCAP profile

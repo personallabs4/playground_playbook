@@ -248,7 +248,7 @@
       when: scan_successful | default(false)
       tags: post_scan
 
-    # Task 13: Upload report to server with proper file handling
+    # Task 13: Upload report to server using curl from target host
     - name: Check if ARF report exists before upload
       ansible.builtin.stat:
         path: "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
@@ -256,17 +256,14 @@
       when: scan_successful | default(false)
       tags: post_scan
 
-    - name: Upload compliance report
-      ansible.builtin.uri:
-        url: "{{ report_server }}/upload"
-        method: POST
-        body_format: form-multipart
-        body:
-          target: "{{ inventory_hostname }}"
-          report: "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
-        src: "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
-        timeout: 60
-        validate_certs: no
+    - name: Upload compliance report using curl
+      ansible.builtin.shell: |
+        curl -X POST \
+          -F "target={{ inventory_hostname }}" \
+          -F "report=@{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" \
+          -w "%{http_code}" \
+          -s \
+          "{{ report_server }}/upload"
       register: upload_result
       when: 
         - scan_successful | default(false)
@@ -274,13 +271,19 @@
       ignore_errors: yes
       tags: post_scan
 
+    - name: Parse upload response
+      ansible.builtin.set_fact:
+        upload_status_code: "{{ upload_result.stdout | default('0') | int }}"
+      when: upload_result is defined and upload_result.stdout is defined
+      tags: post_scan
+
     # Task 14: Handle upload results
     - name: Check upload status
       ansible.builtin.debug:
         msg: |
           Upload result: 
-          - Status: {{ upload_result.status | default('Failed') }}
-          - Message: {{ upload_result.msg | default('Upload failed or skipped') }}
+          - Status Code: {{ upload_status_code | default('Unknown') }}
+          - Message: {{ 'Success' if (upload_status_code | default(0) | int) == 200 else 'Failed or skipped' }}
       when: upload_result is defined
       tags: post_scan
 
@@ -294,8 +297,8 @@
       register: render_result
       when: 
         - upload_result is defined 
-        - upload_result.status is defined
-        - upload_result.status == 200
+        - upload_status_code is defined
+        - upload_status_code | int == 200
       ignore_errors: yes
       tags: post_scan
 
@@ -310,7 +313,7 @@
           - Profile Path: {{ profile_path }}
           - Scan Status: {{ 'Success' if scan_successful | default(false) else 'Failed' }}
           - Reports Location: {{ scap_reports_dir }}/{{ scan_timestamp }}-*
-          - Upload Status: {{ 'Success' if (upload_result.status | default(0)) == 200 else 'Failed/Skipped' }}
+          - Upload Status: {{ 'Success' if (upload_status_code | default(0) | int) == 200 else 'Failed/Skipped' }}
           - Render Status: {{ 'Success' if (render_result.status | default(0)) == 200 else 'Failed/Skipped' }}
       tags: always
 

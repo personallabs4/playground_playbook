@@ -72,17 +72,21 @@
       tags: scan
 
     # Task 3: Execute OpenSCAP scan
-    - name: Run security scan
+    - name: Execute OpenSCAP scan with proper failure handling
       ansible.builtin.command: >
         oscap xccdf eval
         --profile xccdf_org.ssgproject.content_profile_cis_level2_server
         --results-arf "{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
-        "/opt/scap_profiles/{{ target_profile }}"
+        "{{ scap_profiles_dir }}/{{ target_profile }}"
       register: oscap_scan
-      changed_when: "'Rule: Some rules failed.' in oscap_scan.stdout"
-      failed_when:
-        - oscap_scan.rc != 0
-        - "'Rule: Some rules failed.' not in oscap_scan.stdout"
+      changed_when: >
+        oscap_scan.rc == 0 or
+        (oscap_scan.rc == 2 and 'Rule: Some rules failed.' in oscap_scan.stdout)
+      failed_when: >
+        oscap_scan.rc not in [0, 2] or
+        (oscap_scan.rc == 2 and 'Rule: Some rules failed.' not in oscap_scan.stdout)
+      args:
+        warn: no  # Suppresses warning about rc!=0
       tags: scan
     
     # Task 4: Fix timestamp in ARF report

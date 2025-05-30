@@ -72,7 +72,7 @@
       tags: scan
 
     # Task 3: Execute OpenSCAP scan
-    - name: Run security scan
+    - name: Execute OpenSCAP scan
       ansible.builtin.shell: |
         oscap xccdf eval \
         --profile xccdf_org.ssgproject.content_profile_cis_level2_server \
@@ -85,10 +85,9 @@
       changed_when: 
         - oscap_scan.rc in [0, 2]
         - "'Rule: Some rules failed.' in oscap_scan.stdout"
-      failed_when:
-        - oscap_scan.rc not in [0, 2]
-        or
-        - "'Rule: Some rules failed.' not in oscap_scan.stdout"
+      failed_when: >
+        oscap_scan.rc not in [0, 2] or
+        "'Rule: Some rules failed.' not in oscap_scan.stdout"
       tags: scan
 
     # Task 4: Handle scan results

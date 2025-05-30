@@ -11,18 +11,46 @@
     
   tasks:
     # Task 1: Check OS and mark host
-    - name: Gather mandatory OS facts
+    - name: Gather detailed OS facts
       ansible.builtin.setup:
-        gather_subset: min
+        gather_subset:
+          - distribution
+          - os_family
         filter: "ansible_distribution*"
       register: os_facts
       ignore_errors: yes
       tags: always
 
-    - name: Set safe OS facts
+    # Task 2: Create formatted version variables
+    - name: Set version formatting variables
       ansible.builtin.set_fact:
         distro_name: "{{ (os_facts.ansible_facts.ansible_distribution | default('unknown')) | lower }}"
-        distro_version: "{{ os_facts.ansible_facts.ansible_distribution_major_version | default('0') }}"
+        # Handle different version formats:
+        distro_version: >-
+          {% if os_facts.ansible_facts.ansible_distribution_release is defined %}
+            {{ os_facts.ansible_facts.ansible_distribution_release | regex_replace('[^0-9]', '') }}
+          {% elif os_facts.ansible_facts.ansible_distribution_version is defined %}
+            {{ os_facts.ansible_facts.ansible_distribution_version | regex_replace('(\\d+)\\.?(\\d+).*', '\\1\\2') }}
+          {% else %}
+            {{ os_facts.ansible_facts.ansible_distribution_major_version | default('0') }}
+          {% endif %}
+        formatted_os_id: "{{ distro_name }}{{ distro_version }}"
+      tags: always
+
+    # Example outputs:
+    # Ubuntu 22.04 → ubuntu2204
+    # RHEL 8.5 → rhel85
+    # Debian 12 → debian12
+
+    # Task 3: Debug formatted variables (optional)
+    - name: Show formatted OS information
+      ansible.builtin.debug:
+        msg: >
+          Detected OS: {{ distro_name }}
+          Full version: {{ os_facts.ansible_facts.ansible_distribution_version | default('N/A') }}
+          Formatted version: {{ distro_version }}
+          Final OS ID: {{ formatted_os_id }}
+      when: false  # Set to true for debugging
       tags: always
 
     # Task 2: Profile handling with bulletproof validation

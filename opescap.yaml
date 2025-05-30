@@ -31,7 +31,6 @@
     - name: Install OpenSCAP packages for Ubuntu < 24.04
       ansible.builtin.package:
         name:
-          - openscap-utils
           - libopenscap8
         state: present
       when: 
@@ -164,33 +163,82 @@
       tags: setup
 
     # Task 6: Check if OS-specific profile exists locally
-    - name: Check for OS-specific local profile
-      ansible.builtin.set_fact:
-        os_specific_local_profile: >-
-          {%- set profile_patterns = [] -%}
-          {%- if ansible_distribution | lower == 'ubuntu' -%}
-            {%- set _ = profile_patterns.append('*ubuntu' + ansible_distribution_major_version + '*ds.xml') -%}
-            {%- set _ = profile_patterns.append('*ubuntu*ds.xml') -%}
-          {%- elif ansible_distribution | lower == 'almalinux' -%}
-            {%- set _ = profile_patterns.append('*almalinux' + ansible_distribution_major_version + '*ds.xml') -%}
-            {%- set _ = profile_patterns.append('*almalinux*ds.xml') -%}
-          {%- elif ansible_distribution | lower in ['rocky', 'rockylinux'] -%}
-            {%- set _ = profile_patterns.append('*rocky' + ansible_distribution_major_version + '*ds.xml') -%}
-            {%- set _ = profile_patterns.append('*rocky*ds.xml') -%}
-          {%- elif ansible_distribution | lower in ['centos', 'rhel', 'redhat'] -%}
-            {%- set _ = profile_patterns.append('*rhel' + ansible_distribution_major_version + '*ds.xml') -%}
-            {%- set _ = profile_patterns.append('*rhel*ds.xml') -%}
-          {%- else -%}
-            {%- set _ = profile_patterns.append('*rhel*ds.xml') -%}
-          {%- endif -%}
-          {%- for file in local_scap_profiles.files -%}
-            {%- for pattern in profile_patterns -%}
-              {%- if file.path | basename | fnmatch(pattern) -%}
-                {{ file.path }}
-              {%- endif -%}
-            {%- endfor -%}
-          {%- endfor -%}
+    - name: Find OS-specific local profile with shell
+      ansible.builtin.shell: |
+        echo "=== SEARCHING FOR OS-SPECIFIC LOCAL PROFILES ==="
+        echo "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+        
+        FOUND_PROFILE=""
+        
+        {% if ansible_distribution | lower == 'ubuntu' %}
+        # For Ubuntu, search for version-specific then generic
+        echo "Ubuntu - searching for profiles..."
+        for pattern in "ubuntu{{ ansible_distribution_major_version }}" "ubuntu20" "ubuntu22" "ubuntu24" "ubuntu"; do
+          PROFILE=$(find /usr/share/xml/scap/ssg/content /usr/share/scap-security-guide /usr/share/openscap -name "*${pattern}*ds.xml" -type f 2>/dev/null | head -1)
+          if [ -n "$PROFILE" ]; then
+            FOUND_PROFILE="$PROFILE"
+            echo "✓ Found Ubuntu profile: $FOUND_PROFILE"
+            break
+          fi
+        done
+        {% elif ansible_distribution | lower == 'almalinux' %}
+        # For AlmaLinux, search for AlmaLinux-specific then RHEL
+        echo "AlmaLinux - searching for profiles..."
+        for pattern in "almalinux{{ ansible_distribution_major_version }}" "almalinux" "rhel{{ ansible_distribution_major_version }}" "rhel9" "rhel8" "rhel"; do
+          PROFILE=$(find /usr/share/xml/scap/ssg/content /usr/share/scap-security-guide /usr/share/openscap -name "*${pattern}*ds.xml" -type f 2>/dev/null | head -1)
+          if [ -n "$PROFILE" ]; then
+            FOUND_PROFILE="$PROFILE"
+            echo "✓ Found AlmaLinux profile: $FOUND_PROFILE"
+            break
+          fi
+        done
+        {% elif ansible_distribution | lower in ['rocky', 'rockylinux'] %}
+        # For Rocky Linux, search for Rocky-specific then RHEL
+        echo "Rocky Linux - searching for profiles..."
+        for pattern in "rocky{{ ansible_distribution_major_version }}" "rocky" "rhel{{ ansible_distribution_major_version }}" "rhel9" "rhel8" "rhel"; do
+          PROFILE=$(find /usr/share/xml/scap/ssg/content /usr/share/scap-security-guide /usr/share/openscap -name "*${pattern}*ds.xml" -type f 2>/dev/null | head -1)
+          if [ -n "$PROFILE" ]; then
+            FOUND_PROFILE="$PROFILE"
+            echo "✓ Found Rocky profile: $FOUND_PROFILE"
+            break
+          fi
+        done
+        {% elif ansible_distribution | lower in ['centos', 'rhel', 'redhat'] %}
+        # For RHEL/CentOS, search for RHEL profiles
+        echo "RHEL/CentOS - searching for profiles..."
+        for pattern in "rhel{{ ansible_distribution_major_version }}" "rhel9" "rhel8" "rhel"; do
+          PROFILE=$(find /usr/share/xml/scap/ssg/content /usr/share/scap-security-guide /usr/share/openscap -name "*${pattern}*ds.xml" -type f 2>/dev/null | head -1)
+          if [ -n "$PROFILE" ]; then
+            FOUND_PROFILE="$PROFILE"
+            echo "✓ Found RHEL profile: $FOUND_PROFILE"
+            break
+          fi
+        done
+        {% else %}
+        # For other OS, search for RHEL as fallback
+        echo "Other OS - searching for RHEL profiles as fallback..."
+        FOUND_PROFILE=$(find /usr/share/xml/scap/ssg/content /usr/share/scap-security-guide /usr/share/openscap -name "*rhel*ds.xml" -type f 2>/dev/null | head -1)
+        if [ -n "$FOUND_PROFILE" ]; then
+          echo "✓ Found fallback profile: $FOUND_PROFILE"
+        fi
+        {% endif %}
+        
+        if [ -n "$FOUND_PROFILE" ]; then
+          echo "SUCCESS: Found local profile: $FOUND_PROFILE"
+          echo "$FOUND_PROFILE"
+        else
+          echo "INFO: No suitable local profile found"
+          echo ""
+        fi
+      register: local_profile_search
       when: local_scap_profiles.files is defined and local_scap_profiles.files | length > 0
+      ignore_errors: yes
+      tags: setup
+
+    - name: Set OS-specific local profile fact
+      ansible.builtin.set_fact:
+        os_specific_local_profile: "{{ local_profile_search.stdout_lines[-1] if (local_profile_search.stdout_lines is defined and local_profile_search.stdout_lines | length > 0 and local_profile_search.stdout_lines[-1] != '') else '' }}"
+      when: local_profile_search is defined
       tags: setup
 
     # Task 7: Copy local profiles if found, otherwise download
@@ -380,28 +428,7 @@
         
         # Get available profile IDs and select appropriate one
         echo "Getting available profile IDs..."
-        oscap info "$PROFILE_FILE" > /tmp/oscap_info.txt 2>&1
-        
-        # Try to find CIS Level 2 Server profile first, then Level 1, then any profile
-        PROFILE_ID=""
-        for pattern in "cis.*level.*2.*server" "cis.*level.*1.*server" "cis.*server" "cis" ".*"; do
-          PROFILE_ID=$(grep -i "Id:" /tmp/oscap_info.txt | grep -i "$pattern" | head -1 | awk '{print $2}')
-          if [ -n "$PROFILE_ID" ]; then
-            echo "Found profile ID matching '$pattern': $PROFILE_ID"
-            break
-          fi
-        done
-        
-        if [ -z "$PROFILE_ID" ]; then
-          # Get first available profile ID
-          PROFILE_ID=$(grep "Id:" /tmp/oscap_info.txt | head -1 | awk '{print $2}')
-        fi
-        
-        if [ -z "$PROFILE_ID" ]; then
-          echo "ERROR: No profiles found in datastream"
-          cat /tmp/oscap_info.txt
-          exit 1
-        fi
+        PROFILE_ID=(oscap info "$PROFILE_FILE" | grep -A1 "CIS.*Level 2.*Server" | grep "Id:" | awk '{print $2}')
         
         echo "Using profile ID: $PROFILE_ID"
         

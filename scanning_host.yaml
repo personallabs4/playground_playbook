@@ -11,7 +11,20 @@
     
   tasks:
     # Task 1: Check OS and mark host
-    - name: Gather OS facts with full distribution info
+    ---
+- name: OpenSCAP Security Compliance Scan
+  hosts: all
+  become: yes
+  vars:
+    scap_reports_dir: "/opt/reports"
+    scap_profiles_src: "/opt/scap_profiles"
+    scap_guide_version: "0.1.76"
+    timezone_offset: "+07:00"
+    report_server: "http://10.20.11.117:2112"
+
+  tasks:
+    # Task 1: OS detection and profile selection
+    - name: Gather OS facts
       ansible.builtin.setup:
         gather_subset:
           - distribution
@@ -21,84 +34,64 @@
       ignore_errors: yes
       tags: always
 
-    - name: Set distribution base name
+    - name: Set Ubuntu-specific profile names
       ansible.builtin.set_fact:
-        safe_distro_name: >-
-          {{ 
-            (os_facts.ansible_facts.ansible_distribution | default('unknown')) | lower 
-          }}
-      tags: always
-
-    - name: Extract and format version numbers
-      ansible.builtin.set_fact:
-        distro_version: >-
-          {% if os_facts.ansible_facts.ansible_distribution_release is defined %}
-            {{ os_facts.ansible_facts.ansible_distribution_release | regex_replace('[^0-9]', '') }}
-          {% elif os_facts.ansible_facts.ansible_distribution_version is defined %}
-            {{ os_facts.ansible_facts.ansible_distribution_version | regex_replace('(\\d+)\\.?(\\d+).*', '\\1\\2') }}
+        target_profile: >-
+          {% if os_facts.ansible_facts.ansible_distribution | lower == 'ubuntu' %}
+            {% if os_facts.ansible_facts.ansible_distribution_major_version == '20' %}
+              ssg-ubuntu2004-ds.xml
+            {% elif os_facts.ansible_facts.ansible_distribution_major_version == '22' %}
+              ssg-ubuntu2204-ds.xml
+            {% elif os_facts.ansible_facts.ansible_distribution_major_version == '24' %}
+              ssg-ubuntu2404-ds.xml  # Special case for Ubuntu 24
+            {% else %}
+              ssg-ubuntu2004-ds.xml  # Default for other Ubuntu versions
+            {% endif %}
           {% else %}
-            {{ os_facts.ansible_facts.ansible_distribution_major_version | default('0') ~ '00' }}
+            ssg-{{ (os_facts.ansible_facts.ansible_distribution | default('unknown')) | lower }}{{ os_facts.ansible_facts.ansible_distribution_major_version | default('0') }}-ds.xml
           {% endif %}
-      tags: always
-
-    - name: Create target profile pattern
-      ansible.builtin.set_fact:
-        target_profile_pattern: "ssg-{{ safe_distro_name }}{{ distro_version }}-ds.xml"
       tags: scan
 
-    - name: Show profile detection info
+    - name: Debug profile selection
       ansible.builtin.debug:
-        msg: >-
-          Detected: {{ safe_distro_name }} {{ distro_version }}
-          Profile Pattern: {{ target_profile_pattern }}
+        msg: "Selected profile: {{ target_profile }}"
+      when: false  # Set to true for debugging
       tags: scan
-    
-    # Task 2: Profile handling with bulletproof validation
-    - name: Create SCAP directory structure
+
+    # Task 2: Profile validation and scanning
+    - name: Check if profile exists
+      ansible.builtin.stat:
+        path: "/opt/scap_profiles/{{ target_profile }}"
+      register: profile_check
+      tags: scan
+
+    - name: Validate profile exists
+      ansible.builtin.assert:
+        that: profile_check.stat.exists
+        fail_msg: "SCAP profile {{ target_profile }} not found in /opt/scap_profiles"
+      tags: scan
+
+    - name: Ensure reports directory exists
       ansible.builtin.file:
-        path: "/opt/scap_profiles"
+        path: "{{ scap_reports_dir }}"
         state: directory
         mode: '0755'
       tags: scan
 
-    - name: Find matching profiles on target
-      ansible.builtin.find:
-        paths: "/opt/scap_profiles"
-        patterns: "{{ target_profile_pattern }}"
-        use_regex: no
-      register: target_profiles
-      tags: scan
-
-    - name: Validate exactly one profile found
-      ansible.builtin.assert:
-        that:
-          - target_profiles.matched == 1
-        fail_msg: >-
-          Found {{ target_profiles.matched }} profiles matching {{ target_profile_pattern }}.
-          Expected exactly 1.
-      tags: scan
-
-    - name: Set exact profile path
-      ansible.builtin.set_fact:
-        scap_profile_path: "{{ target_profiles.files[0].path }}"
-      when: target_profiles.matched == 1
-      tags: scan
-
-    # Task 3: Run OpenSCAP evaluation (updated to use validated path)
-    - name: Execute OpenSCAP scan
+    # Task 3: Execute OpenSCAP scan
+    - name: Run security scan
       ansible.builtin.command: >
         oscap xccdf eval
         --profile xccdf_org.ssgproject.content_profile_cis_level2_server
         --results-arf "{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
-        "{{ scap_profile_path }}"
-      when: scap_profile_path is defined
+        "/opt/scap_profiles/{{ target_profile }}"
       register: oscap_scan
       changed_when: "'Rule: Some rules failed.' in oscap_scan.stdout"
-      failed_when: 
+      failed_when:
         - oscap_scan.rc != 0
         - "'Rule: Some rules failed.' not in oscap_scan.stdout"
       tags: scan
-
+    
     # Task 4: Fix timestamp in ARF report
     - name: Adjust timezone in ARF report
       ansible.builtin.shell: >

@@ -160,12 +160,72 @@
       ignore_errors: yes
       tags: setup
 
-    - name: Copy all SCAP profiles
+    - name: Copy SCAP profiles to target directory (OS-specific)
       ansible.builtin.shell: |
-        if [ -d "/tmp/scap-security-guide-{{ scap_guide_version }}" ]; then
-          find "/tmp/scap-security-guide-{{ scap_guide_version }}" -name "*ds.xml" -exec cp {} "{{ scap_profiles_dir }}/" \;
+        echo "=== COPYING OS-SPECIFIC SCAP PROFILES ==="
+        echo "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+        
+        # Clear target directory first
+        rm -f {{ scap_profiles_dir }}/*.xml 2>/dev/null || true
+        
+        # Define which profiles to copy based on OS
+        {% if ansible_distribution | lower == 'ubuntu' %}
+        echo "Ubuntu detected - copying Ubuntu profiles"
+        SEARCH_PATTERNS="*ubuntu*ds.xml"
+        {% elif ansible_distribution | lower == 'almalinux' %}
+        echo "AlmaLinux detected - copying RHEL profiles for AlmaLinux"
+        SEARCH_PATTERNS="*rhel*ds.xml"
+        {% elif ansible_distribution | lower in ['rocky', 'rockylinux'] %}
+        echo "Rocky Linux detected - copying RHEL profiles for Rocky"
+        SEARCH_PATTERNS="*rhel*ds.xml"
+        {% elif ansible_distribution | lower in ['centos', 'rhel', 'redhat'] %}
+        echo "RHEL/CentOS detected - copying RHEL profiles"
+        SEARCH_PATTERNS="*rhel*ds.xml"
+        {% else %}
+        echo "Other OS detected - copying RHEL profiles as fallback"
+        SEARCH_PATTERNS="*rhel*ds.xml"
+        {% endif %}
+        
+        # Copy matching profiles
+        COPIED_COUNT=0
+        for pattern in $SEARCH_PATTERNS; do
+          echo "Searching for pattern: $pattern"
+          for source_file in $(find /tmp/scap-security-guide-* /usr/share -name "$pattern" -type f 2>/dev/null); do
+            if [ -f "$source_file" ]; then
+              filename=$(basename "$source_file")
+              cp "$source_file" "{{ scap_profiles_dir }}/$filename"
+              echo "✓ Copied: $filename"
+              COPIED_COUNT=$((COPIED_COUNT + 1))
+            fi
+          done
+        done
+        
+        {% if ansible_distribution | lower == 'ubuntu' %}
+        # For Ubuntu, also copy best-match version-specific profiles
+        VERSION="{{ ansible_distribution_major_version }}"
+        echo "Looking for Ubuntu $VERSION specific profiles..."
+        
+        for source_file in $(find /tmp/scap-security-guide-* /usr/share -name "*ubuntu${VERSION}*ds.xml" -o -name "*ubuntu20*ds.xml" -type f 2>/dev/null); do
+          if [ -f "$source_file" ]; then
+            filename=$(basename "$source_file")
+            cp "$source_file" "{{ scap_profiles_dir }}/$filename"
+            echo "✓ Copied Ubuntu specific: $filename"
+            COPIED_COUNT=$((COPIED_COUNT + 1))
+          fi
+        done
+        {% endif %}
+        
+        echo ""
+        echo "=== COPY SUMMARY ==="
+        echo "Total files copied: $COPIED_COUNT"
+        echo "Files in {{ scap_profiles_dir }}:"
+        ls -la {{ scap_profiles_dir }}/*.xml 2>/dev/null || echo "No XML files found"
+        
+        if [ $COPIED_COUNT -eq 0 ]; then
+          echo "WARNING: No matching profiles found for {{ ansible_distribution }}"
+          echo "Available source files:"
+          find /tmp/scap-security-guide-* /usr/share -name "*ds.xml" -type f 2>/dev/null | head -10
         fi
-        ls -la "{{ scap_profiles_dir }}/"
       ignore_errors: yes
       tags: setup
 
@@ -360,63 +420,125 @@
       ignore_errors: yes
       tags: scan
 
-    # Task 10: Ultra simple OpenSCAP scan with minimal script
-    - name: Find and display available profiles
+    # Task 10: Find OS-appropriate profile and scan
+    - name: Find OS-appropriate profile in /opt/scap_profiles
       ansible.builtin.shell: |
-        echo "=== PROFILE SEARCH ==="
-        find /usr/share /opt -name "*ds.xml" -type f 2>/dev/null | head -5
-      register: profile_search_simple
-      ignore_errors: yes
-      tags: scan
-
-    - name: Show available profiles
-      ansible.builtin.debug:
-        msg: "Available profiles: {{ profile_search_simple.stdout_lines }}"
-      tags: scan
-
-    - name: Test oscap command
-      ansible.builtin.shell: |
-        which oscap
-        oscap --version | head -1
-      register: oscap_test
-      ignore_errors: yes
-      tags: scan
-
-    - name: Show oscap test results
-      ansible.builtin.debug:
-        msg: "{{ oscap_test.stdout_lines }}"
-      tags: scan
-
-    - name: Execute simple scan if possible
-      ansible.builtin.shell: |
-        # Use first available profile
-        PROFILE=$(find /usr/share /opt -name "*ds.xml" -type f 2>/dev/null | head -1)
+        echo "=== FINDING OS-APPROPRIATE PROFILE ==="
+        echo "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+        echo "Looking in: {{ scap_profiles_dir }}"
         
-        if [ -z "$PROFILE" ]; then
-          echo "No SCAP profiles found"
+        # List all available profiles
+        echo "Available profiles:"
+        ls -la {{ scap_profiles_dir }}/*.xml 2>/dev/null || echo "No XML files found"
+        
+        SELECTED_PROFILE=""
+        
+        {% if ansible_distribution | lower == 'ubuntu' %}
+        # For Ubuntu, prefer version-specific, then generic Ubuntu
+        echo "Ubuntu - looking for version-specific profiles first..."
+        
+        VERSION="{{ ansible_distribution_major_version }}"
+        for pattern in "ubuntu${VERSION}" "ubuntu20" "ubuntu22" "ubuntu"; do
+          PROFILE=$(find {{ scap_profiles_dir }} -name "*${pattern}*ds.xml" -type f 2>/dev/null | head -1)
+          if [ -n "$PROFILE" ]; then
+            SELECTED_PROFILE="$PROFILE"
+            echo "✓ Selected Ubuntu profile: $SELECTED_PROFILE"
+            break
+          fi
+        done
+        {% else %}
+        # For RHEL-based systems, prefer version-specific RHEL
+        echo "RHEL-based - looking for RHEL profiles..."
+        
+        VERSION="{{ ansible_distribution_major_version | default('9') }}"
+        for pattern in "rhel${VERSION}" "rhel9" "rhel8" "rhel"; do
+          PROFILE=$(find {{ scap_profiles_dir }} -name "*${pattern}*ds.xml" -type f 2>/dev/null | head -1)
+          if [ -n "$PROFILE" ]; then
+            SELECTED_PROFILE="$PROFILE"
+            echo "✓ Selected RHEL profile: $SELECTED_PROFILE"
+            break
+          fi
+        done
+        {% endif %}
+        
+        # Fallback to any available profile
+        if [ -z "$SELECTED_PROFILE" ]; then
+          echo "No OS-specific profile found, using any available profile..."
+          SELECTED_PROFILE=$(find {{ scap_profiles_dir }} -name "*ds.xml" -type f 2>/dev/null | head -1)
+          if [ -n "$SELECTED_PROFILE" ]; then
+            echo "✓ Selected fallback profile: $SELECTED_PROFILE"
+          fi
+        fi
+        
+        if [ -z "$SELECTED_PROFILE" ]; then
+          echo "ERROR: No SCAP profiles found in {{ scap_profiles_dir }}"
           exit 1
         fi
         
-        echo "Using: $PROFILE"
+        echo "$SELECTED_PROFILE"
+      register: profile_selection
+      ignore_errors: yes
+      tags: scan
+
+    - name: Show profile selection result
+      ansible.builtin.debug:
+        msg: "{{ profile_selection.stdout_lines }}"
+      tags: scan
+
+    - name: Execute OpenSCAP scan with selected profile
+      ansible.builtin.shell: |
+        PROFILE_FILE="{{ profile_selection.stdout_lines[-1] }}"
         
-        # Get first profile ID
-        PROFILE_ID=$(oscap info "$PROFILE" | grep "Profile:" | head -1 | awk '{print $2}')
-        echo "Profile ID: $PROFILE_ID"
+        echo "=== EXECUTING OSCAP SCAN ==="
+        echo "Selected profile: $PROFILE_FILE"
         
-        # Generate simple timestamp
-        TS=$(date +%Y%m%dT%H%M%S)
-        echo "Timestamp: $TS"
+        # Verify file exists
+        if [ ! -f "$PROFILE_FILE" ]; then
+          echo "ERROR: Profile file not found: $PROFILE_FILE"
+          exit 1
+        fi
         
-        # Run scan
-        oscap xccdf eval --profile "$PROFILE_ID" --results-arf "{{ scap_reports_dir }}/${TS}-arf.xml" "$PROFILE"
+        # Get first available profile ID
+        echo "Getting profile ID..."
+        PROFILE_ID=$(oscap info "$PROFILE_FILE" | grep "Profile:" | head -1 | awk '{print $2}')
         
-        echo "Done with RC: $?"
-        ls -la "{{ scap_reports_dir }}/${TS}-arf.xml" 2>/dev/null || echo "No ARF file"
-      register: simple_scan
+        if [ -z "$PROFILE_ID" ]; then
+          echo "ERROR: No profiles found in datastream"
+          exit 1
+        fi
+        
+        echo "Using profile ID: $PROFILE_ID"
+        
+        # Generate timestamp
+        TIMESTAMP=$(date +%Y%m%dT%H%M%S)
+        echo "Timestamp: $TIMESTAMP"
+        
+        # Execute scan
+        echo "Starting scan..."
+        oscap xccdf eval \
+          --profile "$PROFILE_ID" \
+          --results-arf "{{ scap_reports_dir }}/${TIMESTAMP}-arf.xml" \
+          "$PROFILE_FILE"
+        
+        SCAN_RC=$?
+        echo "Scan completed with return code: $SCAN_RC"
+        
+        # Verify ARF file creation
+        ARF_FILE="{{ scap_reports_dir }}/${TIMESTAMP}-arf.xml"
+        if [ -f "$ARF_FILE" ]; then
+          echo "✓ ARF file created: $ARF_FILE"
+          ls -la "$ARF_FILE"
+        else
+          echo "✗ ARF file not created"
+        fi
+        
+        exit $SCAN_RC
+      register: oscap_scan_result
       when: 
-        - profile_search_simple.stdout_lines is defined
-        - profile_search_simple.stdout_lines | length > 0
-        - oscap_test.rc == 0
+        - profile_selection is defined
+        - profile_selection.rc == 0
+        - profile_selection.stdout_lines is defined
+        - profile_selection.stdout_lines | length > 0
       ignore_errors: yes
       tags: scan
 

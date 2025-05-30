@@ -519,14 +519,10 @@
       tags: post_scan
 
     - name: Upload compliance report
-      ansible.builtin.uri:
-        url: "{{ report_server }}/upload"
-        method: POST
-        body_format: form-multipart
-        body:
-          target: "{{ inventory_hostname }}"
-        src: "{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
-        remote_src: no
+      ansible.builtin.shell: |
+        curl -X POST "{{ report_server }}/upload" \
+          -F "target={{ inventory_hostname }}" \
+          -F "report=@{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
       register: upload_result
       when: adjust_report is defined
       ignore_errors: yes

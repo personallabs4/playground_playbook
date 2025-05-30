@@ -10,6 +10,29 @@
     report_server: "http://10.20.11.117:2112"
 
   tasks:
+    # Task 0: Update package cache before installing packages
+    - name: Update package cache (Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      ignore_errors: yes
+      tags: setup
+
+    - name: Update package cache (RHEL/CentOS/Rocky/Alma)
+      ansible.builtin.yum:
+        update_cache: yes
+      when: ansible_os_family == "RedHat" and ansible_distribution_major_version | int <= 7
+      ignore_errors: yes
+      tags: setup
+
+    - name: Update package cache (RHEL 8+/CentOS 8+/Rocky/Alma with dnf)
+      ansible.builtin.dnf:
+        update_cache: yes
+      when: ansible_os_family == "RedHat" and ansible_distribution_major_version | int >= 8
+      ignore_errors: yes
+      tags: setup
+
     # Task 1: Install OpenSCAP packages based on OS family
     - name: Install core OpenSCAP packages for Debian/Ubuntu systems
       ansible.builtin.package:

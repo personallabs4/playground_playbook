@@ -500,7 +500,7 @@
         
         # Get first available profile ID
         echo "Getting profile ID..."
-        PROFILE_ID=$(oscap info "$PROFILE_FILE" | grep "Profile:" | head -1 | awk '{print $2}')
+        PROFILE_ID=$(oscap info $PROFILE_FILE | grep -A 2 "Level 2 Server" | awk '/Id:/{print $2}')
         
         if [ -z "$PROFILE_ID" ]; then
           echo "ERROR: No profiles found in datastream"

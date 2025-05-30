@@ -31,7 +31,6 @@
     - name: Install OpenSCAP packages for Ubuntu < 24.04
       ansible.builtin.package:
         name:
-          - openscap-utils
           - libopenscap8
         state: present
       when: 
@@ -267,10 +266,31 @@
         msg: "{{ profile_search_detailed.stdout_lines | default(['Profile search failed']) }}"
       tags: scan
 
-    - name: Set profile path from search results
+    # Task 8c: Force set profile path if search failed
+    - name: Force set profile path if search failed
       ansible.builtin.set_fact:
-        profile_path: "{{ profile_search_detailed.stdout_lines[-1] if profile_search_detailed.rc == 0 else '' }}"
-      when: profile_search_detailed is defined
+        profile_path: >-
+          {%- if profile_search_detailed.rc == 0 and profile_search_detailed.stdout_lines[-1] is defined -%}
+            {{ profile_search_detailed.stdout_lines[-1] }}
+          {%- else -%}
+            {%- if ansible_distribution | lower == 'ubuntu' -%}
+              /opt/scap_profiles/ssg-ubuntu2004-ds.xml
+            {%- elif ansible_distribution | lower == 'almalinux' -%}
+              /usr/share/xml/scap/ssg/content/ssg-rhel{{ ansible_distribution_major_version | default('9') }}-ds.xml
+            {%- else -%}
+              /usr/share/xml/scap/ssg/content/ssg-rhel8-ds.xml
+            {%- endif -%}
+          {%- endif -%}
+      tags: scan
+
+    - name: Show final profile path
+      ansible.builtin.debug:
+        msg: |
+          Final Profile Selection:
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - Expected profile: {{ profile_name }}
+          - Selected profile path: {{ profile_path }}
+          - Search was successful: {{ profile_search_detailed.rc == 0 if profile_search_detailed is defined else 'No search performed' }}
       tags: scan
 
     # Task 8b: Debug profile file status
@@ -339,33 +359,59 @@
         echo "=== SIMPLE OSCAP SCAN ==="
         echo "Profile: {{ profile_path }}"
         
+        # Check if profile file exists first
+        if [ ! -f "{{ profile_path }}" ]; then
+          echo "ERROR: Profile file not found: {{ profile_path }}"
+          exit 1
+        fi
+        
+        # Check if oscap command exists
+        if ! command -v oscap >/dev/null 2>&1; then
+          echo "ERROR: oscap command not found"
+          exit 1
+        fi
+        
         # Get ANY profile from the file
+        echo "Getting first available profile..."
         FIRST_PROFILE=$(oscap info "{{ profile_path }}" | grep "Profile:" | head -1 | awk '{print $2}')
+        
+        if [ -z "$FIRST_PROFILE" ]; then
+          echo "ERROR: No profiles found in datastream"
+          echo "Available content:"
+          oscap info "{{ profile_path }}" | head -20
+          exit 1
+        fi
         
         echo "Using profile: $FIRST_PROFILE"
         
         # Simple scan command
+        echo "Starting scan..."
         oscap xccdf eval \
           --profile "$FIRST_PROFILE" \
           --results-arf "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" \
           "{{ profile_path }}"
         
-        echo "Scan finished with RC: $?"
+        SCAN_RC=$?
+        echo "Scan finished with RC: $SCAN_RC"
         
         # Check if ARF file was created
         if [ -f "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" ]; then
           echo "ARF file created successfully"
+          ls -la "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml"
         else
           echo "ARF file NOT created"
         fi
+        
+        exit $SCAN_RC
       register: oscap_result
       when: 
-        - simple_check is defined 
-        - simple_check.rc == 0
+        - profile_path is defined 
+        - profile_path != ""
+        - profile_path != "Not found"
       ignore_errors: yes
       tags: scan
 
-    # Task 11: Display scan results
+    # Task 11: Display scan results (always show)
     - name: Display scan results
       ansible.builtin.debug:
         msg: |
@@ -374,8 +420,14 @@
           - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
           - Profile: {{ profile_name }}
           - Profile Path: {{ profile_path | default('Not found') }}
-          - Prerequisites: {{ 'OK' if (simple_check is defined and simple_check.rc == 0) else 'Failed' }}
+          - Simple Check: {{ 'OK' if (simple_check is defined and simple_check.rc == 0) else 'Failed/Skipped' }}
+          - Scan Executed: {{ 'Yes' if (oscap_result is defined) else 'No - Skipped' }}
           - Scan Status: {{ 'Success' if (oscap_result is defined and oscap_result.rc is defined and oscap_result.rc in [0, 2]) else 'Failed/Skipped' }}
+          
+          Debug Info:
+          - profile_path defined: {{ profile_path is defined }}
+          - profile_path value: {{ profile_path | default('undefined') }}
+          - profile_path not empty: {{ profile_path != "" if profile_path is defined else 'N/A' }}
           
           {% if oscap_result is defined and oscap_result.stdout is defined %}
           Scan Output:

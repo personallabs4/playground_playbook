@@ -523,11 +523,10 @@
         url: "{{ report_server }}/upload"
         method: POST
         body_format: form-multipart
-        headers:
-          Content-Type: "multipart/form-data"
         body:
           target: "{{ inventory_hostname }}"
-          report: "@{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
+        src: "{{ scap_reports_dir }}/{{ ansible_date_time.iso8601_basic_short }}-arf.xml"
+        remote_src: no
       register: upload_result
       when: adjust_report is defined
       ignore_errors: yes

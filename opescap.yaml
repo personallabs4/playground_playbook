@@ -80,9 +80,10 @@
         - "ssg-ubuntu2004-ds.xml"
         - "ssg-ubuntu2204-ds.xml"
         - "ssg-ubuntu2404-ds.xml"
+        - "ssg-almalinux8-ds.xml"
+        - "ssg-almalinux9-ds.xml"
       when: 
-        - ansible_os_family == "Debian"
-        - ansible_distribution | lower == "ubuntu"
+        - ansible_os_family in ["Debian", "RedHat"]
       ignore_errors: yes
       tags: setup
 
@@ -125,15 +126,15 @@
             {%- endif -%}
           {%- elif os_facts.ansible_facts.ansible_distribution | lower == 'debian' -%}
             ssg-debian{{ os_facts.ansible_facts.ansible_distribution_major_version | default('11') }}-ds.xml
-          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['centos', 'rhel', 'redhat'] -%}
+          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['centos', 'rhel', 'redhat', 'red hat enterprise linux'] -%}
             ssg-rhel{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
-          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['rocky', 'rockylinux'] -%}
+          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['rocky', 'rockylinux', 'rocky linux'] -%}
             ssg-rhel{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
-          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['almalinux', 'alma'] -%}
-            ssg-rhel{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
+          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['almalinux', 'alma linux', 'alma'] -%}
+            ssg-almalinux{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
           {%- elif os_facts.ansible_facts.ansible_distribution | lower == 'fedora' -%}
             ssg-fedora-ds.xml
-          {%- elif os_facts.ansible_facts.ansible_distribution | lower == 'oracle' -%}
+          {%- elif os_facts.ansible_facts.ansible_distribution | lower in ['oracle', 'oracle linux'] -%}
             ssg-ol{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
           {%- else -%}
             ssg-rhel{{ os_facts.ansible_facts.ansible_distribution_major_version | default('8') }}-ds.xml
@@ -182,6 +183,8 @@
           - "*rhel*ds.xml"
           - "*centos*ds.xml"
           - "*ubuntu*ds.xml"
+          - "*almalinux*ds.xml"
+          - "*alma*ds.xml"
         recurse: yes
       register: system_profiles
       when: not (local_profile_check.stat.exists | default(false))
@@ -219,7 +222,7 @@
         scan_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
       tags: scan
 
-    # Task 10: Execute OpenSCAP scan with OS-specific profile support
+    # Task 10: Execute OpenSCAP scan with OS-specific profile support and better error handling
     - name: Execute OpenSCAP scan
       ansible.builtin.shell: |
         {% set profile_name = 'xccdf_org.ssgproject.content_profile_cis_level2_server' %}
@@ -228,8 +231,27 @@
             {% set profile_name = 'xccdf_org.ssgproject.content_profile_cis_server_l2' %}
           {% endif %}
         {% endif %}
+        
+        # Check if profile exists in the datastream
+        if ! oscap info "{{ profile_path }}" | grep -q "{{ profile_name }}"; then
+          echo "Profile {{ profile_name }} not found, trying alternative profiles..."
+          # Try to find any CIS profile
+          AVAILABLE_PROFILES=$(oscap info "{{ profile_path }}" | grep -E "(cis|CIS)" | head -1 | awk '{print $1}')
+          if [ -n "$AVAILABLE_PROFILES" ]; then
+            PROFILE_TO_USE="$AVAILABLE_PROFILES"
+            echo "Using alternative profile: $PROFILE_TO_USE"
+          else
+            # Use first available profile as last resort
+            PROFILE_TO_USE=$(oscap info "{{ profile_path }}" | grep "Profile:" | head -1 | awk '{print $2}')
+            echo "Using first available profile: $PROFILE_TO_USE"
+          fi
+        else
+          PROFILE_TO_USE="{{ profile_name }}"
+          echo "Using requested profile: $PROFILE_TO_USE"
+        fi
+        
         oscap xccdf eval \
-          --profile {{ profile_name }} \
+          --profile "$PROFILE_TO_USE" \
           --results-arf "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" \
           --report "{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html" \
           "{{ profile_path }}" 2>&1

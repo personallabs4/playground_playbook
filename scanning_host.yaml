@@ -54,13 +54,14 @@
 
     - name: Copy the profile to the remote host
       copy:
-        src: "/opt/scap_profiles/{{ clean_profile_path }}"
-        dest: "/opt/scap_profiles/{{ clean_profile_path }}"
+        src: "{{ clean_profile_path }}"
+        dest: "{{ clean_profile_path }}"
         mode: '0755'
 
-    - name: Show final profile path
-      ansible.builtin.debug:
-        msg: "Final profile path: '{{ clean_profile_path }}'"
+    - name: Check profile exists on target
+      ansible.builtin.stat:
+        path: "{{ scap_profiles_dir }}/{{ target_profile }}"
+      register: profile_check
       tags: scan
       
     - name: Ensure reports directory exists

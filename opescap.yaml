@@ -33,11 +33,23 @@
       ignore_errors: yes
       tags: setup
 
+    # Task 0b: Install essential tools first
+    - name: Install essential tools
+      ansible.builtin.package:
+        name:
+          - unzip
+          - curl
+          - wget
+        state: present
+      ignore_errors: yes
+      tags: setup
+
     # Task 1: Install OpenSCAP packages based on OS family
     - name: Install core OpenSCAP packages for Debian/Ubuntu systems
       ansible.builtin.package:
         name:
           - libopenscap8
+          - libopenscap25
           - openscap-utils
         state: present
       when: ansible_os_family == "Debian"
@@ -45,15 +57,12 @@
       tags: setup
 
     # Task 1a: Alternative - Download SCAP Security Guide if packages not available
-    - name: Download SCAP Security Guide for Ubuntu (fallback)
+    - name: Download SCAP Security Guide (fallback for all systems)
       ansible.builtin.get_url:
         url: "https://github.com/ComplianceAsCode/content/releases/download/v{{ scap_guide_version }}/scap-security-guide-{{ scap_guide_version }}.zip"
         dest: "/tmp/scap-security-guide.zip"
         mode: '0644'
-        timeout: 30
-      when: 
-        - ansible_os_family == "Debian"
-        - ansible_distribution | lower == "ubuntu"
+        timeout: 60
       ignore_errors: yes
       tags: setup
 
@@ -63,27 +72,15 @@
         dest: "/tmp/"
         remote_src: yes
         creates: "/tmp/scap-security-guide-{{ scap_guide_version }}"
-      when: 
-        - ansible_os_family == "Debian"
-        - ansible_distribution | lower == "ubuntu"
       ignore_errors: yes
       tags: setup
 
-    - name: Copy Ubuntu SCAP profiles to target directory (fallback)
-      ansible.builtin.copy:
-        src: "/tmp/scap-security-guide-{{ scap_guide_version }}/{{ item }}"
-        dest: "{{ scap_profiles_dir }}/{{ item }}"
-        remote_src: yes
-        mode: '0644'
-      loop:
-        - "ssg-ubuntu1804-ds.xml"
-        - "ssg-ubuntu2004-ds.xml"
-        - "ssg-ubuntu2204-ds.xml"
-        - "ssg-ubuntu2404-ds.xml"
-        - "ssg-almalinux8-ds.xml"
-        - "ssg-almalinux9-ds.xml"
-      when: 
-        - ansible_os_family in ["Debian", "RedHat"]
+    - name: Copy SCAP profiles to target directory (fallback)
+      ansible.builtin.shell: |
+        find "/tmp/scap-security-guide-{{ scap_guide_version }}" -name "*.xml" -exec cp {} "{{ scap_profiles_dir }}/" \; 2>/dev/null || true
+        ls -la "{{ scap_profiles_dir }}/"
+      args:
+        executable: /bin/bash
       ignore_errors: yes
       tags: setup
 
@@ -222,39 +219,87 @@
         scan_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
       tags: scan
 
-    # Task 10: Execute OpenSCAP scan with OS-specific profile support and better error handling
-    - name: Execute OpenSCAP scan
+    # Task 10: Execute OpenSCAP scan with enhanced error handling and profile detection
+    - name: List available profiles for debugging
       ansible.builtin.shell: |
-        {% set profile_name = 'xccdf_org.ssgproject.content_profile_cis_level2_server' %}
-        {% if os_facts.ansible_facts.ansible_distribution | lower in ['rocky', 'rockylinux', 'almalinux', 'alma', 'centos', 'rhel', 'redhat'] %}
-          {% if os_facts.ansible_facts.ansible_distribution_major_version | int >= 9 %}
-            {% set profile_name = 'xccdf_org.ssgproject.content_profile_cis_server_l2' %}
-          {% endif %}
+        echo "=== Available profiles in {{ profile_path }} ==="
+        oscap info "{{ profile_path }}" 2>/dev/null | grep -E "(Profile|Title):" || echo "No profiles found or file not accessible"
+        echo "=== End of profile list ==="
+      register: profile_list
+      ignore_errors: yes
+      tags: scan
+
+    - name: Display available profiles
+      ansible.builtin.debug:
+        msg: "{{ profile_list.stdout_lines | default(['No profile information available']) }}"
+      tags: scan
+
+    - name: Execute OpenSCAP scan with dynamic profile selection
+      ansible.builtin.shell: |
+        set -e
+        
+        # Default profile to try
+        DEFAULT_PROFILE="xccdf_org.ssgproject.content_profile_cis_level2_server"
+        
+        # For newer RHEL-based systems, try different profile name
+        {% if os_facts.ansible_facts.ansible_distribution | lower in ['rocky', 'rockylinux', 'almalinux', 'alma', 'centos', 'rhel', 'redhat'] and os_facts.ansible_facts.ansible_distribution_major_version | int >= 9 %}
+        DEFAULT_PROFILE="xccdf_org.ssgproject.content_profile_cis_server_l2"
         {% endif %}
         
-        # Check if profile exists in the datastream
-        if ! oscap info "{{ profile_path }}" | grep -q "{{ profile_name }}"; then
-          echo "Profile {{ profile_name }} not found, trying alternative profiles..."
-          # Try to find any CIS profile
-          AVAILABLE_PROFILES=$(oscap info "{{ profile_path }}" | grep -E "(cis|CIS)" | head -1 | awk '{print $1}')
-          if [ -n "$AVAILABLE_PROFILES" ]; then
-            PROFILE_TO_USE="$AVAILABLE_PROFILES"
-            echo "Using alternative profile: $PROFILE_TO_USE"
-          else
-            # Use first available profile as last resort
-            PROFILE_TO_USE=$(oscap info "{{ profile_path }}" | grep "Profile:" | head -1 | awk '{print $2}')
-            echo "Using first available profile: $PROFILE_TO_USE"
-          fi
-        else
-          PROFILE_TO_USE="{{ profile_name }}"
-          echo "Using requested profile: $PROFILE_TO_USE"
+        echo "Attempting to use profile: $DEFAULT_PROFILE"
+        
+        # Check if the datastream file exists and is readable
+        if [ ! -r "{{ profile_path }}" ]; then
+          echo "ERROR: Cannot read datastream file: {{ profile_path }}"
+          exit 1
         fi
         
+        # Get available profiles
+        AVAILABLE_PROFILES=$(oscap info "{{ profile_path }}" 2>/dev/null | grep "Profile:" | awk '{print $2}' || echo "")
+        
+        if [ -z "$AVAILABLE_PROFILES" ]; then
+          echo "ERROR: No profiles found in datastream"
+          exit 1
+        fi
+        
+        echo "Available profiles: $AVAILABLE_PROFILES"
+        
+        # Try to find the best profile
+        PROFILE_TO_USE=""
+        
+        # 1. Try exact match
+        if echo "$AVAILABLE_PROFILES" | grep -q "$DEFAULT_PROFILE"; then
+          PROFILE_TO_USE="$DEFAULT_PROFILE"
+          echo "Using exact match: $PROFILE_TO_USE"
+        # 2. Try CIS level 2
+        elif echo "$AVAILABLE_PROFILES" | grep -qi "cis.*level.*2\|cis.*server.*l2\|cis.*l2"; then
+          PROFILE_TO_USE=$(echo "$AVAILABLE_PROFILES" | grep -i "cis.*level.*2\|cis.*server.*l2\|cis.*l2" | head -1)
+          echo "Using CIS Level 2 profile: $PROFILE_TO_USE"
+        # 3. Try any CIS profile
+        elif echo "$AVAILABLE_PROFILES" | grep -qi "cis"; then
+          PROFILE_TO_USE=$(echo "$AVAILABLE_PROFILES" | grep -i "cis" | head -1)
+          echo "Using CIS profile: $PROFILE_TO_USE"
+        # 4. Use first available profile
+        else
+          PROFILE_TO_USE=$(echo "$AVAILABLE_PROFILES" | head -1)
+          echo "Using first available profile: $PROFILE_TO_USE"
+        fi
+        
+        if [ -z "$PROFILE_TO_USE" ]; then
+          echo "ERROR: No suitable profile found"
+          exit 1
+        fi
+        
+        echo "Final profile selection: $PROFILE_TO_USE"
+        
+        # Execute the scan
         oscap xccdf eval \
           --profile "$PROFILE_TO_USE" \
           --results-arf "{{ scap_reports_dir }}/{{ scan_timestamp }}-arf.xml" \
           --report "{{ scap_reports_dir }}/{{ scan_timestamp }}-report.html" \
-          "{{ profile_path }}" 2>&1
+          "{{ profile_path }}"
+          
+        echo "Scan completed. Return code: $?"
       args:
         executable: /bin/bash
       register: oscap_scan

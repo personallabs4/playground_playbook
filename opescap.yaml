@@ -429,7 +429,8 @@
         # Get available profile IDs and select appropriate one
         echo "Getting available profile IDs..."
         # PROFILE_ID=(oscap info "$PROFILE_FILE" | grep -A1 "CIS.*Level 2.*Server" | grep "Id:" | awk '{print $2}')
-        PROFILE_ID="$(oscap info "$PROFILE_FILE" | grep -A1 "CIS.*Level 2.*Server" | grep "Id:" | awk '{print $2}')"
+        # PROFILE_ID="$(oscap info "$PROFILE_FILE" | grep -A1 "CIS.*Level 2.*Server" | grep "Id:" | awk '{print $2}')"
+        PROFILE_ID="$(oscap info $PROFILE_FILE 2>/dev/null | awk -v file="$PROFILE_FILE" '/CIS.*Level 2.*Server/{getline; if(/Id:/){print $2; found=1}} END{if(!found){system("oscap info " file " 2>/dev/null | grep -A1 \"CIS\" | grep \"Id:\" | awk \"{print \\$2}\" | head -1")}}')"
         
         echo "Using profile ID: $PROFILE_ID"
         
@@ -530,12 +531,7 @@
 
     # Task 14: Trigger report rendering (fixed condition)
     - name: Trigger report rendering
-      ansible.builtin.uri:
-        url: "{{ report_server }}/render"
-        method: GET
-        timeout: 30
-      when: 
-        - upload_results is defined
+      ansible.builtin.command: curl -s http://10.20.11.117:2112/render
       ignore_errors: yes
       tags: post_scan
 

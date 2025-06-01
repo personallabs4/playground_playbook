@@ -1,0 +1,101 @@
+---
+- name: CIS Benchmark Multi-Profile Remediation
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    scap_profiles_dir: "/opt/scap_profiles"
+    bash_scripts_dir: "{{ scap_profiles_dir }}/bash"
+    remote_scripts_dir: "/tmp/cis_remediation"
+    log_dir: "/var/log/cis_remediation"
+    
+    # Default CIS profile - dapat diubah via command line
+    # ansible-playbook -e "cis_profile=cis_level1_server" playbook.yml
+    cis_profile: "cis_level2_server"
+    
+    # Available profiles mapping
+    profile_mapping:
+      cis_level1_server: "cis_server_l1"
+      cis_level2_server: "cis_level2_server" 
+      cis_level1_workstation: "cis_level1_workstation"
+      cis_level2_workstation: "cis_level2_workstation"
+      cis_workstation_l1: "cis_workstation_l1"
+      cis_workstation_l2: "cis_workstation_l2"
+      cis_generic: "cis"
+      pci_dss: "pci-dss"
+      hipaa: "hipaa"
+      stig: "stig"
+      stig_gui: "stig_gui"
+      
+  pre_tasks:
+    - name: Validate CIS profile parameter
+      ansible.builtin.fail:
+        msg: |
+          Invalid CIS profile: {{ cis_profile }}
+          Available profiles: {{ profile_mapping.keys() | list | join(', ') }}
+      when: cis_profile not in profile_mapping.keys()
+
+    - name: Set selected profile
+      ansible.builtin.set_fact:
+        selected_profile: "{{ profile_mapping[cis_profile] }}"
+
+    - name: Display remediation information
+      ansible.builtin.debug:
+        msg: |
+          🎯 CIS REMEDIATION CONFIGURATION
+          ================================
+          Target Profile: {{ cis_profile }}
+          Script Profile: {{ selected_profile }}
+          Target System: {{ inventory_hostname }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+
+    - name: Create log directory
+      ansible.builtin.file:
+        path: "{{ log_dir }}"
+        state: directory
+        mode: '0755'
+      
+    - name: Create remote scripts directory
+      ansible.builtin.file:
+        path: "{{ remote_scripts_dir }}"
+        state: directory
+        mode: '0755'
+
+  tasks:
+    - name: Set OS-specific variables for Ubuntu 16.04
+      ansible.builtin.set_fact:
+        os_identifier: "ubuntu1604"
+        primary_script: "ubuntu1604-script-{{ selected_profile }}.sh"
+        fallback_scripts:
+          - "ubuntu1604-script-cis.sh"
+          - "ubuntu1604-script-standard.sh"
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_version == "16.04"
+
+    - name: Set OS-specific variables for Ubuntu 18.04
+      ansible.builtin.set_fact:
+        os_identifier: "ubuntu1804"
+        primary_script: "ubuntu1804-script-{{ selected_profile }}.sh"
+        fallback_scripts:
+          - "ubuntu1804-script-cis.sh"
+          - "ubuntu1804-script-standard.sh"
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_version == "18.04"
+
+    - name: Set OS-specific variables for Ubuntu 20.04
+      ansible.builtin.set_fact:
+        os_identifier: "ubuntu2004"
+        primary_script: "ubuntu2004-script-{{ selected_profile }}.sh"
+        fallback_scripts:
+          - "ubuntu2004-script-cis_level1_server.sh"
+          - "ubuntu2004-script-cis_level1_workstation.sh"
+          - "ubuntu2004-script-stig.sh"
+          - "ubuntu2004-script-standard.sh"
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_version == "20.04"
+
+    - name: Set OS-specific variables for Ubuntu 22.04
+      ansible.builtin.set_fact:
+        os_identifier: "ubuntu2204"
+        primary_script: "ubuntu2204-script-{{ selected_profile }}.sh"
+        fallback_scripts:
+          - "ubuntu2204-script-cis_level1_server.sh"
+          - "ubuntu2204-script-cis_level1_workstation.sh"
+          - "ubuntu2204-script-stig.

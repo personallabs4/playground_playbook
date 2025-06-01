@@ -206,6 +206,7 @@
       when: 
         - not specific_script_stat.stat.exists
         - alternative_script_files is defined
+        - alternative_script_files.files is defined
         - alternative_script_files.files | length > 0
 
     - name: Display found scripts information
@@ -214,7 +215,7 @@
           Target OS: {{ os_identifier }}
           Looking for: {{ script_pattern }}
           Specific script exists: {{ specific_script_stat.stat.exists }}
-          Alternative scripts found: {{ alternative_script_files.files | length if alternative_script_files is defined else 0 }}
+          Alternative scripts found: {{ alternative_script_files.files | length if alternative_script_files is defined and alternative_script_files.files is defined else 0 }}
           Selected script: {{ script_name if script_name is defined else 'None' }}
           Script path: {{ remediation_script if remediation_script is defined else 'None' }}
 
@@ -231,9 +232,13 @@
       ansible.builtin.debug:
         msg: |
           Available scripts for {{ os_identifier }}:
+          {% if available_scripts is defined and available_scripts.files is defined %}
           {% for file in available_scripts.files %}
           - {{ file.path | basename }}
           {% endfor %}
+          {% else %}
+          No scripts found or variable not defined
+          {% endif %}
       when: 
         - script_name is not defined
         - available_scripts is defined
@@ -246,7 +251,7 @@
           Alternative pattern: {{ alt_script_pattern }}
           
           Available scripts for this OS:
-          {% if available_scripts is defined %}
+          {% if available_scripts is defined and available_scripts.files is defined %}
           {% for file in available_scripts.files %}
           - {{ file.path | basename }}
           {% endfor %}

@@ -1,5 +1,5 @@
 ---
-- name: CIS Benchmark Multi-Profile Remediation
+- name: CIS Benchmark Level 2 Server Remediation
   hosts: all
   become: yes
   gather_facts: yes
@@ -9,46 +9,7 @@
     remote_scripts_dir: "/tmp/cis_remediation"
     log_dir: "/var/log/cis_remediation"
     
-    # Default CIS profile - dapat diubah via command line
-    # ansible-playbook -e "cis_profile=cis_level1_server" playbook.yml
-    cis_profile: "cis_level2_server"
-    
-    # Available profiles mapping
-    profile_mapping:
-      cis_level1_server: "cis_server_l1"
-      cis_level2_server: "cis_level2_server" 
-      cis_level1_workstation: "cis_level1_workstation"
-      cis_level2_workstation: "cis_level2_workstation"
-      cis_workstation_l1: "cis_workstation_l1"
-      cis_workstation_l2: "cis_workstation_l2"
-      cis_generic: "cis"
-      pci_dss: "pci-dss"
-      hipaa: "hipaa"
-      stig: "stig"
-      stig_gui: "stig_gui"
-      
   pre_tasks:
-    - name: Validate CIS profile parameter
-      ansible.builtin.fail:
-        msg: |
-          Invalid CIS profile: {{ cis_profile }}
-          Available profiles: {{ profile_mapping.keys() | list | join(', ') }}
-      when: cis_profile not in profile_mapping.keys()
-
-    - name: Set selected profile
-      ansible.builtin.set_fact:
-        selected_profile: "{{ profile_mapping[cis_profile] }}"
-
-    - name: Display remediation information
-      ansible.builtin.debug:
-        msg: |
-          🎯 CIS REMEDIATION CONFIGURATION
-          ================================
-          Target Profile: {{ cis_profile }}
-          Script Profile: {{ selected_profile }}
-          Target System: {{ inventory_hostname }}
-          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
-
     - name: Create log directory
       ansible.builtin.file:
         path: "{{ log_dir }}"
@@ -61,41 +22,386 @@
         state: directory
         mode: '0755'
 
+    - name: Display target system information
+      ansible.builtin.debug:
+        msg: |
+          Target System: {{ inventory_hostname }}
+          OS Family: {{ ansible_os_family }}
+          Distribution: {{ ansible_distribution }}
+          Version: {{ ansible_distribution_version }}
+          Major Version: {{ ansible_distribution_major_version }}
+          Architecture: {{ ansible_architecture }}
+
   tasks:
     - name: Set OS-specific variables for Ubuntu 16.04
       ansible.builtin.set_fact:
         os_identifier: "ubuntu1604"
-        primary_script: "ubuntu1604-script-{{ selected_profile }}.sh"
-        fallback_scripts:
-          - "ubuntu1604-script-cis.sh"
-          - "ubuntu1604-script-standard.sh"
+        script_pattern: "ubuntu1604-script-cis_level2_server.sh"
+        alt_script_pattern: "ubuntu1604-script-cis*.sh"
       when: ansible_distribution == "Ubuntu" and ansible_distribution_version == "16.04"
 
     - name: Set OS-specific variables for Ubuntu 18.04
       ansible.builtin.set_fact:
         os_identifier: "ubuntu1804"
-        primary_script: "ubuntu1804-script-{{ selected_profile }}.sh"
-        fallback_scripts:
-          - "ubuntu1804-script-cis.sh"
-          - "ubuntu1804-script-standard.sh"
+        script_pattern: "ubuntu1804-script-cis_level2_server.sh"
+        alt_script_pattern: "ubuntu1804-script-cis*.sh"
       when: ansible_distribution == "Ubuntu" and ansible_distribution_version == "18.04"
 
     - name: Set OS-specific variables for Ubuntu 20.04
       ansible.builtin.set_fact:
         os_identifier: "ubuntu2004"
-        primary_script: "ubuntu2004-script-{{ selected_profile }}.sh"
-        fallback_scripts:
-          - "ubuntu2004-script-cis_level1_server.sh"
-          - "ubuntu2004-script-cis_level1_workstation.sh"
-          - "ubuntu2004-script-stig.sh"
-          - "ubuntu2004-script-standard.sh"
+        script_pattern: "ubuntu2004-script-cis_level2_server.sh"
+        alt_script_pattern: "ubuntu2004-script-cis*.sh"
       when: ansible_distribution == "Ubuntu" and ansible_distribution_version == "20.04"
 
     - name: Set OS-specific variables for Ubuntu 22.04
       ansible.builtin.set_fact:
         os_identifier: "ubuntu2204"
-        primary_script: "ubuntu2204-script-{{ selected_profile }}.sh"
-        fallback_scripts:
-          - "ubuntu2204-script-cis_level1_server.sh"
-          - "ubuntu2204-script-cis_level1_workstation.sh"
-          - "ubuntu2204-script-stig.
+        script_pattern: "ubuntu2204-script-cis_level2_server.sh"
+        alt_script_pattern: "ubuntu2204-script-cis*.sh"
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_version == "22.04"
+
+    - name: Set OS-specific variables for Ubuntu 24.04
+      ansible.builtin.set_fact:
+        os_identifier: "ubuntu2404"
+        script_pattern: "ubuntu2404-script-cis_level2_server.sh"
+        alt_script_pattern: "ubuntu2404-script-cis*.sh"
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_version == "24.04"
+
+    - name: Set OS-specific variables for AlmaLinux 9
+      ansible.builtin.set_fact:
+        os_identifier: "almalinux9"
+        script_pattern: "almalinux9-script-cis_level2_server.sh"
+        alt_script_pattern: "almalinux9-script-cis*.sh"
+      when: ansible_distribution == "AlmaLinux" and ansible_distribution_major_version == "9"
+
+    - name: Set OS-specific variables for CentOS 8
+      ansible.builtin.set_fact:
+        os_identifier: "centos8"
+        script_pattern: "centos8-script-cis_level2_server.sh"
+        alt_script_pattern: "centos8-script-cis*.sh"
+      when: ansible_distribution == "CentOS" and ansible_distribution_major_version == "8"
+
+    - name: Set OS-specific variables for CentOS Stream 9
+      ansible.builtin.set_fact:
+        os_identifier: "cs9"
+        script_pattern: "cs9-script-cis_level2_server.sh"
+        alt_script_pattern: "cs9-script-cis*.sh"
+      when: ansible_distribution == "CentOS" and ansible_distribution_major_version == "9"
+
+    - name: Set OS-specific variables for CentOS Stream 10
+      ansible.builtin.set_fact:
+        os_identifier: "cs10"
+        script_pattern: "cs10-script-cis_level2_server.sh"
+        alt_script_pattern: "cs10-script-cis*.sh"
+      when: ansible_distribution == "CentOS" and ansible_distribution_major_version == "10"
+
+    - name: Set OS-specific variables for RHEL 8
+      ansible.builtin.set_fact:
+        os_identifier: "rhel8"
+        script_pattern: "rhel8-script-cis_level2_server.sh"
+        alt_script_pattern: "rhel8-script-cis*.sh"
+      when: ansible_distribution == "RedHat" and ansible_distribution_major_version == "8"
+
+    - name: Set OS-specific variables for RHEL 9
+      ansible.builtin.set_fact:
+        os_identifier: "rhel9"
+        script_pattern: "rhel9-script-cis_level2_server.sh"
+        alt_script_pattern: "rhel9-script-cis*.sh"
+      when: ansible_distribution == "RedHat" and ansible_distribution_major_version == "9"
+
+    - name: Set OS-specific variables for RHEL 10
+      ansible.builtin.set_fact:
+        os_identifier: "rhel10"
+        script_pattern: "rhel10-script-cis_level2_server.sh"
+        alt_script_pattern: "rhel10-script-cis*.sh"
+      when: ansible_distribution == "RedHat" and ansible_distribution_major_version == "10"
+
+    - name: Set OS-specific variables for SLES 12
+      ansible.builtin.set_fact:
+        os_identifier: "sle12"
+        script_pattern: "sle12-script-cis_level2_server.sh"
+        alt_script_pattern: "sle12-script-cis*.sh"
+      when: ansible_distribution == "SLES" and ansible_distribution_major_version == "12"
+
+    - name: Set OS-specific variables for SLES 15
+      ansible.builtin.set_fact:
+        os_identifier: "sle15"
+        script_pattern: "sle15-script-cis_level2_server.sh"
+        alt_script_pattern: "sle15-script-cis*.sh"
+      when: ansible_distribution == "SLES" and ansible_distribution_major_version == "15"
+
+    - name: Set OS-specific variables for Debian 11
+      ansible.builtin.set_fact:
+        os_identifier: "debian11"
+        script_pattern: "debian11-script-cis_level2_server.sh"
+        alt_script_pattern: "debian11-script-cis*.sh"
+      when: ansible_distribution == "Debian" and ansible_distribution_major_version == "11"
+
+    - name: Set OS-specific variables for Debian 12
+      ansible.builtin.set_fact:
+        os_identifier: "debian12"
+        script_pattern: "debian12-script-cis_level2_server.sh"
+        alt_script_pattern: "debian12-script-cis*.sh"
+      when: ansible_distribution == "Debian" and ansible_distribution_major_version == "12"
+
+    - name: Set OS-specific variables for Oracle Linux 7
+      ansible.builtin.set_fact:
+        os_identifier: "ol7"
+        script_pattern: "ol7-script-cis_level2_server.sh"
+        alt_script_pattern: "ol7-script-cis*.sh"
+      when: ansible_distribution == "OracleLinux" and ansible_distribution_major_version == "7"
+
+    - name: Set OS-specific variables for Oracle Linux 8
+      ansible.builtin.set_fact:
+        os_identifier: "ol8"
+        script_pattern: "ol8-script-cis_level2_server.sh"
+        alt_script_pattern: "ol8-script-cis*.sh"
+      when: ansible_distribution == "OracleLinux" and ansible_distribution_major_version == "8"
+
+    - name: Set OS-specific variables for Oracle Linux 9
+      ansible.builtin.set_fact:
+        os_identifier: "ol9"
+        script_pattern: "ol9-script-cis_level2_server.sh"
+        alt_script_pattern: "ol9-script-cis*.sh"
+      when: ansible_distribution == "OracleLinux" and ansible_distribution_major_version == "9"
+
+    - name: Set OS-specific variables for Oracle Linux 10
+      ansible.builtin.set_fact:
+        os_identifier: "ol10"
+        script_pattern: "ol10-script-cis_level2_server.sh"
+        alt_script_pattern: "ol10-script-cis*.sh"
+      when: ansible_distribution == "OracleLinux" and ansible_distribution_major_version == "10"
+
+    - name: Fail if OS is not supported
+      ansible.builtin.fail:
+        msg: "Unsupported OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+      when: os_identifier is not defined
+
+    - name: Check if specific CIS Level 2 Server script exists
+      ansible.builtin.stat:
+        path: "{{ bash_scripts_dir }}/{{ script_pattern }}"
+      register: specific_script_stat
+      delegate_to: localhost
+
+    - name: Find alternative CIS scripts if specific Level 2 Server script not found
+      ansible.builtin.find:
+        paths: "{{ bash_scripts_dir }}"
+        patterns: "{{ alt_script_pattern }}"
+        file_type: file
+      register: alternative_script_files
+      delegate_to: localhost
+      when: not specific_script_stat.stat.exists
+
+    - name: Set remediation script path (specific Level 2 Server script)
+      ansible.builtin.set_fact:
+        remediation_script: "{{ bash_scripts_dir }}/{{ script_pattern }}"
+        script_name: "{{ script_pattern }}"
+      when: specific_script_stat.stat.exists
+
+    - name: Set remediation script path (alternative CIS script)
+      ansible.builtin.set_fact:
+        remediation_script: "{{ alternative_script_files.files[0].path }}"
+        script_name: "{{ alternative_script_files.files[0].path | basename }}"
+      when: 
+        - not specific_script_stat.stat.exists
+        - alternative_script_files is defined
+        - alternative_script_files.files | length > 0
+
+    - name: Display found scripts information
+      ansible.builtin.debug:
+        msg: |
+          Target OS: {{ os_identifier }}
+          Looking for: {{ script_pattern }}
+          Specific script exists: {{ specific_script_stat.stat.exists }}
+          Alternative scripts found: {{ alternative_script_files.files | length if alternative_script_files is defined else 0 }}
+          Selected script: {{ script_name if script_name is defined else 'None' }}
+          Script path: {{ remediation_script if remediation_script is defined else 'None' }}
+
+    - name: List available scripts for this OS (when no match found)
+      ansible.builtin.find:
+        paths: "{{ bash_scripts_dir }}"
+        patterns: "{{ os_identifier }}-script-*.sh"
+        file_type: file
+      register: available_scripts
+      delegate_to: localhost
+      when: script_name is not defined
+
+    - name: Display available scripts for troubleshooting
+      ansible.builtin.debug:
+        msg: |
+          Available scripts for {{ os_identifier }}:
+          {% for file in available_scripts.files %}
+          - {{ file.path | basename }}
+          {% endfor %}
+      when: 
+        - script_name is not defined
+        - available_scripts is defined
+
+    - name: Fail if no remediation script found
+      ansible.builtin.fail:
+        msg: |
+          No CIS remediation script found for {{ os_identifier }}.
+          Looking for: {{ script_pattern }}
+          Alternative pattern: {{ alt_script_pattern }}
+          
+          Available scripts for this OS:
+          {% if available_scripts is defined %}
+          {% for file in available_scripts.files %}
+          - {{ file.path | basename }}
+          {% endfor %}
+          {% else %}
+          No scripts found with pattern: {{ os_identifier }}-script-*.sh
+          {% endif %}
+          
+          Please ensure the correct script exists in {{ bash_scripts_dir }}/
+      when: script_name is not defined
+
+    - name: Copy remediation script to target host
+      ansible.builtin.copy:
+        src: "{{ remediation_script }}"
+        dest: "{{ remote_scripts_dir }}/{{ script_name }}"
+        mode: '0755'
+        backup: yes
+      when: remediation_script is defined
+
+    - name: Create pre-remediation backup timestamp
+      ansible.builtin.set_fact:
+        backup_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+
+    - name: Create system backup before remediation
+      ansible.builtin.shell: |
+        mkdir -p {{ log_dir }}/backups/{{ backup_timestamp }}
+        # Backup critical configuration files
+        cp -r /etc/ssh {{ log_dir }}/backups/{{ backup_timestamp }}/ 2>/dev/null || true
+        cp -r /etc/security {{ log_dir }}/backups/{{ backup_timestamp }}/ 2>/dev/null || true
+        cp -r /etc/audit {{ log_dir }}/backups/{{ backup_timestamp }}/ 2>/dev/null || true
+        cp /etc/fstab {{ log_dir }}/backups/{{ backup_timestamp }}/ 2>/dev/null || true
+        cp /etc/hosts {{ log_dir }}/backups/{{ backup_timestamp }}/ 2>/dev/null || true
+      register: backup_result
+      ignore_errors: yes
+
+    - name: Log remediation start
+      ansible.builtin.lineinfile:
+        path: "{{ log_dir }}/cis_remediation.log"
+        line: |
+          [{{ ansible_date_time.iso8601 }}] Starting CIS Level 2 Server remediation
+          Host: {{ inventory_hostname }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Script: {{ script_name }}
+          Backup: {{ backup_timestamp }}
+        create: yes
+        mode: '0644'
+
+    - name: Run CIS Level 2 Server remediation script
+      ansible.builtin.shell: |
+        cd {{ remote_scripts_dir }}
+        bash {{ script_name }} 2>&1 | tee {{ log_dir }}/remediation_output_{{ backup_timestamp }}.log
+      register: remediation_result
+      async: 3600  # 1 hour timeout
+      poll: 30     # Check every 30 seconds
+      when: remediation_script is defined
+
+    - name: Log remediation completion
+      ansible.builtin.lineinfile:
+        path: "{{ log_dir }}/cis_remediation.log"
+        line: |
+          [{{ ansible_date_time.iso8601 }}] Remediation completed
+          Exit code: {{ remediation_result.rc }}
+          Duration: {{ remediation_result.delta if remediation_result.delta is defined else 'Unknown' }}
+        mode: '0644'
+
+    - name: Display remediation summary
+      ansible.builtin.debug:
+        msg: |
+          =================================
+          CIS REMEDIATION SUMMARY
+          =================================
+          Host: {{ inventory_hostname }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Script executed: {{ script_name }}
+          Exit code: {{ remediation_result.rc }}
+          Duration: {{ remediation_result.delta if remediation_result.delta is defined else 'Unknown' }}
+          Log file: {{ log_dir }}/remediation_output_{{ backup_timestamp }}.log
+          Backup location: {{ log_dir }}/backups/{{ backup_timestamp }}
+          =================================
+
+    - name: Check if reboot is required (Ubuntu/Debian)
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+      when: ansible_os_family == "Debian"
+
+    - name: Check if reboot is required (RHEL family)
+      ansible.builtin.shell: |
+        if needs-restarting -r >/dev/null 2>&1; then
+          echo "reboot_needed"
+        else
+          echo "no_reboot_needed"
+        fi
+      register: reboot_check_rhel
+      ignore_errors: yes
+      changed_when: false
+      when: ansible_os_family == "RedHat"
+
+    - name: Set reboot required fact
+      ansible.builtin.set_fact:
+        reboot_needed: true
+      when: >
+        (ansible_os_family == "Debian" and reboot_required_file.stat.exists) or
+        (ansible_os_family == "RedHat" and reboot_check_rhel.stdout is defined and "reboot_needed" in reboot_check_rhel.stdout)
+
+    - name: Notify if reboot is required
+      ansible.builtin.debug:
+        msg: |
+          ⚠️  REBOOT REQUIRED ⚠️
+          Host {{ inventory_hostname }} requires a reboot to complete the remediation.
+          Please schedule a reboot at your earliest convenience.
+      when: reboot_needed is defined and reboot_needed
+
+    - name: Create remediation report
+      ansible.builtin.template:
+        src: remediation_report.j2
+        dest: "{{ log_dir }}/remediation_report_{{ backup_timestamp }}.txt"
+        mode: '0644'
+      vars:
+        report_data:
+          hostname: "{{ inventory_hostname }}"
+          os_info: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+          script_name: "{{ script_name }}"
+          execution_time: "{{ ansible_date_time.iso8601 }}"
+          exit_code: "{{ remediation_result.rc }}"
+          duration: "{{ remediation_result.delta if remediation_result.delta is defined else 'Unknown' }}"
+          reboot_required: "{{ reboot_needed | default(false) }}"
+          backup_location: "{{ log_dir }}/backups/{{ backup_timestamp }}"
+          log_file: "{{ log_dir }}/remediation_output_{{ backup_timestamp }}.log"
+
+  post_tasks:
+    - name: Cleanup temporary files
+      ansible.builtin.file:
+        path: "{{ remote_scripts_dir }}"
+        state: absent
+      ignore_errors: yes
+
+    - name: Final status message
+      ansible.builtin.debug:
+        msg: |
+          🎯 CIS Level 2 Server remediation completed for {{ inventory_hostname }}
+          📊 Check logs at: {{ log_dir }}/
+          💾 Backup available at: {{ log_dir }}/backups/{{ backup_timestamp }}
+          {% if reboot_needed is defined and reboot_needed %}
+          🔄 Reboot required to complete remediation
+          {% endif %}
+
+  handlers:
+    - name: restart sshd
+      ansible.builtin.service:
+        name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+        state: restarted
+      ignore_errors: yes
+
+    - name: restart auditd
+      ansible.builtin.service:
+        name: auditd
+        state: restarted
+      ignore_errors: yes

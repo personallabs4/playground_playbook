@@ -71,7 +71,7 @@
     - name: Set OS-specific variables for AlmaLinux 9
       ansible.builtin.set_fact:
         os_identifier: "almalinux9"
-        script_pattern: "almalinux9-script-cis_level2_server.sh"
+        script_pattern: "almalinux9-script-cis.sh"
         alt_script_pattern: "almalinux9-script-cis*.sh"
       when: ansible_distribution == "AlmaLinux" and ansible_distribution_major_version == "9"
 
